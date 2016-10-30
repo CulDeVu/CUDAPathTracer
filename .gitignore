@@ -1,0 +1,4 @@
+models/*
+*.exe
+*.lib
+*.exp
