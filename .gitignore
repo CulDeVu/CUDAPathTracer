@@ -2,3 +2,4 @@ models/*
 *.exe
 *.lib
 *.exp
+*.obj
