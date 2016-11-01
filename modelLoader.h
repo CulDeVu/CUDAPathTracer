@@ -5,15 +5,12 @@ __device__ const float MAX_FLOAT = 100000;
 #include <string>
 #include <vector>
 
-#include "BVH.h"
 #include "color.h"
 #include "tiny_obj_loader.h"
 #include "vec3.h"
 
 using std::string;
 using std::vector;
-
-BVH_node* sceneGraph;
 
 struct triangle
 {
@@ -119,7 +116,7 @@ __device__ float triIntersect(vec3 o, vec3 ray, vec3* verts_device, triangle* tr
 	return t;*/
 }
 
-void loadOBJ(BVH_node* scene, string filename, vec3 origin, float scale)
+void loadOBJ(string filename, vec3 origin, float scale)
 {
 	printf("Loading .obj file: %s\n", filename.c_str());
 
@@ -178,25 +175,6 @@ void loadOBJ(BVH_node* scene, string filename, vec3 origin, float scale)
 		mats.push_back(m);
 	}
 
-	printf("%d verts added \n", verts.size());
-	printf("%d tris added\n", tris.size());
-
-	// add triangles to BVH
-	for (int i = 0; i < tris.size(); ++i)
-	{
-		AABB b = AABB();
-		b.x1 = min(min(verts[tris[i].v0].x, verts[tris[i].v1].x), verts[tris[i].v2].x);
-		b.y1 = min(min(verts[tris[i].v0].y, verts[tris[i].v1].y), verts[tris[i].v2].y);
-		b.z1 = min(min(verts[tris[i].v0].z, verts[tris[i].v1].z), verts[tris[i].v2].z);
-
-		b.x2 = max(max(verts[tris[i].v0].x, verts[tris[i].v1].x), verts[tris[i].v2].x);
-		b.y2 = max(max(verts[tris[i].v0].y, verts[tris[i].v1].y), verts[tris[i].v2].y);
-		b.z2 = max(max(verts[tris[i].v0].z, verts[tris[i].v1].z), verts[tris[i].v2].z);
-
-		BVH_node* toAdd = createEmptyBVH_node();
-		toAdd->box = b;
-		toAdd->target = i;
-
-		addToBVH(scene, toAdd);
-	}
+	printf("%zd verts added \n", verts.size());
+	printf("%zd tris added\n", tris.size());
 }

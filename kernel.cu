@@ -10,6 +10,7 @@
 
 #include "modelLoader.h"
 
+#include "BVH.h"
 #include "lens.h"
 #include "color.h"
 #include "sphere.h"
@@ -20,7 +21,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 3000
+#define NUM_SAMPLES 1
 
 #define NUM_SPHERES 8
 
@@ -209,7 +210,9 @@ __global__ void setupPathStateBuffer(pathState* pathStateBuffer, camera* cam, cu
 }
 __global__ void setupCurand(curandState *state)
 {
-	int idx = threadIdx.x + blockDim.x*blockIdx.x;
+	int idx = blockIdx.x*blockDim.x + threadIdx.x;
+	if (idx >= IMAGE_SIZE)
+		return;
 	curand_init(1234, idx, 0, &state[idx]);
 }
 
@@ -293,34 +296,41 @@ __global__ void drawPixel(
 int main()
 {
 	// load shit
-	BVH_node* scene = createEmptyBVH_node();
-	loadOBJ(scene, "models/CornellBox-Original.obj", vec3(), 1);
-	//loadOBJ(scene, "models/my_cornell.obj", vec3(0, 0, 2), 1);
+	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
+	//loadOBJ("models/my_cornell.obj", vec3(0, 0, 2), 1);
+	buildBVH();
 
+	//int blocksize = 512;
+	//int nblocks = TILE_SIZE / blocksize + (TILE_SIZE % blocksize == 0 ? 0 : 1);
 	int blocksize = 512;
-	int nblocks = TILE_SIZE / blocksize + (TILE_SIZE % blocksize == 0 ? 0 : 1);
+	int nblocks = 4;
 
 	// setup the random number generator
 	curandState* randState_device;
-	cudaMalloc(&randState_device, blocksize * nblocks * sizeof(curandState));
+	cudaMalloc(&randState_device, IMAGE_SIZE * sizeof(curandState));
 	setupCurand <<< nblocks, blocksize >>>(randState_device);
 
+	cudaDeviceSynchronize();
+
+	cudaFree(randState_device);
+
 	// set up the camera
-	camera cam;
+	/*camera cam;
 	cam.pos = vec3(0, 1, 3);
 	cam.distFromFilm = 1;
 	cam.focalLength = 3;
 	cam.radius = 0.0;
 	camera* cam_device;
+	printf("camera size: %zd", sizeof(camera));
 	cudaMalloc((void**)&cam_device, sizeof(camera));
 	cudaMemcpy(cam_device, &cam, sizeof(camera), cudaMemcpyHostToDevice);
 
 	cudaDeviceSynchronize();
+
+	/*cudaDeviceSynchronize();
 	checkError();
+	printf("here?\n");
 	
-	// setup for the main loop
-	//int numTiles = IMAGE_SIZE / TILE_SIZE + (IMAGE_SIZE % TILE_SIZE == 0 ? 0 : 1);
-	//printf("%d", (int)sizeof(pathState));
 	// setup host image buffer
 	color* imgBuffer_host = (color*)malloc(IMAGE_SIZE * sizeof(color));
 
@@ -333,12 +343,6 @@ int main()
 	pathState* pathStateBuffer_device;
 	cudaMalloc((void**)&pathStateBuffer_device, IMAGE_SIZE * sizeof(pathState));
 	setupPathStateBuffer <<< nblocks, blocksize >>>(pathStateBuffer_device, cam_device, randState_device);
-	
-	// setup scene
-	//sphere* scene_host = setupScene();
-	//sphere* scene_device;
-	//cudaMalloc((void**)&scene_device, NUM_SPHERES * sizeof(sphere));
-	//cudaMemcpy(scene_device, scene_host, NUM_SPHERES * sizeof(sphere), cudaMemcpyHostToDevice);
 
 	// vertex buffer
 	cudaMalloc((void**)&scene_device.verts, verts.size() * sizeof(vec3));
@@ -403,7 +407,7 @@ int main()
 			fprintf(fp, "%d %d %d ", (int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255));
 		}
 	}
-	fclose(fp);
+	fclose(fp);*/
 
 	printf("\nfinished");
 

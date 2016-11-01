@@ -3,3 +3,4 @@ models/*
 *.lib
 *.exp
 *.obj
+*.pdb
