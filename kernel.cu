@@ -3,6 +3,7 @@
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
+#include <chrono>
 #include <cuda.h>
 #include <curand.h>
 #include <curand_kernel.h>
@@ -21,9 +22,11 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 1
+#define NUM_SAMPLES 100
 
 #define NUM_SPHERES 8
+
+//#define SAFE_CALL(x) {auto s=std::chrono::steady_clock::now();x;cudaDeviceSynchronize(); auto e=std::chrono::stead_clock::now();double diff=std::chrono::duration<double>(e-s).count();if(diff>2.0)printf("-----Possible timeout in %s of %f seconds-----\n",#x,diff);}
 
 struct ray
 {
@@ -296,26 +299,22 @@ __global__ void drawPixel(
 int main()
 {
 	// load shit
-	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
-	//loadOBJ("models/my_cornell.obj", vec3(0, 0, 2), 1);
+	//loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
+	loadOBJ("models/my_cornell.obj", vec3(), 1);
 	buildBVH();
 
 	//int blocksize = 512;
 	//int nblocks = TILE_SIZE / blocksize + (TILE_SIZE % blocksize == 0 ? 0 : 1);
-	int blocksize = 512;
-	int nblocks = 4;
+	int nThreads = 512;
+	int nblocks = 512;
 
 	// setup the random number generator
 	curandState* randState_device;
 	cudaMalloc(&randState_device, IMAGE_SIZE * sizeof(curandState));
-	setupCurand <<< nblocks, blocksize >>>(randState_device);
-
-	cudaDeviceSynchronize();
-
-	cudaFree(randState_device);
+	setupCurand <<< nblocks, nThreads >>>(randState_device);
 
 	// set up the camera
-	/*camera cam;
+	camera cam;
 	cam.pos = vec3(0, 1, 3);
 	cam.distFromFilm = 1;
 	cam.focalLength = 3;
@@ -326,10 +325,7 @@ int main()
 	cudaMemcpy(cam_device, &cam, sizeof(camera), cudaMemcpyHostToDevice);
 
 	cudaDeviceSynchronize();
-
-	/*cudaDeviceSynchronize();
 	checkError();
-	printf("here?\n");
 	
 	// setup host image buffer
 	color* imgBuffer_host = (color*)malloc(IMAGE_SIZE * sizeof(color));
@@ -337,12 +333,12 @@ int main()
 	// setup device image buffer
 	color* imgBuffer_device;
 	cudaMalloc((void**)&imgBuffer_device, IMAGE_SIZE * sizeof(color));
-	setupImgBuffer <<< nblocks, blocksize >>>(imgBuffer_device);
+	setupImgBuffer <<< nblocks, nThreads >>>(imgBuffer_device);
 
 	// setup path state buffer
 	pathState* pathStateBuffer_device;
 	cudaMalloc((void**)&pathStateBuffer_device, IMAGE_SIZE * sizeof(pathState));
-	setupPathStateBuffer <<< nblocks, blocksize >>>(pathStateBuffer_device, cam_device, randState_device);
+	setupPathStateBuffer <<< nblocks, nThreads >>>(pathStateBuffer_device, cam_device, randState_device);
 
 	// vertex buffer
 	cudaMalloc((void**)&scene_device.verts, verts.size() * sizeof(vec3));
@@ -372,11 +368,18 @@ int main()
 		int sampleNum = 1;
 		while (sampleNum <= NUM_SAMPLES)
 		{
-			drawPixel << < nblocks, blocksize >> >(imgBuffer_device, pathStateBuffer_device, scene_device, cam_device, randState_device);
+			auto start = std::chrono::steady_clock::now();
+
+			drawPixel << < nblocks, nThreads >> >(imgBuffer_device, pathStateBuffer_device, scene_device, cam_device, randState_device);
 
 			if (sampleNum % 10 == 0)
 				printf("sample %d finished\n", sampleNum);
 			cudaDeviceSynchronize();
+
+			auto end = std::chrono::steady_clock::now();
+			double diff = std::chrono::duration<double>(end - start).count();
+			if (diff > 0.5)
+				printf("-----Possible too long execution of %f seconds-----\n", diff);
 
 			checkError();
 			++sampleNum;
@@ -407,7 +410,7 @@ int main()
 			fprintf(fp, "%d %d %d ", (int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255));
 		}
 	}
-	fclose(fp);*/
+	fclose(fp);
 
 	printf("\nfinished");
 
