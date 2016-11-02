@@ -22,7 +22,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 100
+#define NUM_SAMPLES 1000
 
 #define NUM_SPHERES 8
 
@@ -140,7 +140,7 @@ __device__ color BRDF(materialDesc m, vec3 vDir, vec3 lDir)
 
 __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, curandState* crs)
 {
-	if (pathState->bounceNum > 5)
+	if (pathState->bounceNum > 3)
 	{
 		pathState->weight = color(0, 0, 0);
 		return true;
@@ -158,9 +158,15 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, c
 			trisID = i;
 		}
 	}
-	if (closestT > MAX_FLOAT - 1)
+	closestT -= 0.001;
+	if (closestT < 0.001)
 	{
 		pathState->weight = color(0, 0, 0);
+		return true;
+	}
+	if (closestT > MAX_FLOAT - 1)
+	{
+		pathState->weight = mul(pathState->weight, color(0, 0, 0));
 		return true;
 	}
 
@@ -242,75 +248,28 @@ __global__ void drawPixel(
 
 		imgBuff[idx] = normalized(imgBuff[idx]);
 		pathStateBuffer[idx].vDir = randCameraRay(cam, vec3(x, y, 0), &randState[idx]);
-		//pathStateBuffer[idx].vDir = getCameraRay(idx);
 		pathStateBuffer[idx].weight = color(1, 1, 1);
 		pathStateBuffer[idx].bounceNum = 0;
 		pathStateBuffer[idx].sampleNum += 1;
 	}
 }
 
-/*__host__ sphere* setupScene()
-{
-	sphere* scene = (sphere*)malloc(NUM_SPHERES * sizeof(sphere));
-
-	scene[0].pos = newvec3(0, -3 - 1000, 0); // bottom
-	scene[0].rad = 1000;
-	scene[0].diffuse = newcolor(0.25, 0.25, 0.25);
-	scene[0].emm = newcolor(0, 0, 0);
-
-	scene[1].pos = newvec3(0, 0, -20 - 1000); // front
-	scene[1].rad = 1000;
-	scene[1].diffuse = newcolor(0.75, 0.75, 0.75);
-	scene[1].emm = newcolor(0, 0, 0);
-
-	scene[2].pos = newvec3(-5 - 1000, 0, 0); // left
-	scene[2].rad = 1000;
-	scene[2].diffuse = newcolor(0.75, 0.25, 0.25);
-	scene[2].emm = newcolor(0, 0, 0);
-
-	scene[3].pos = newvec3(5 + 1000, 0, 0); // right
-	scene[3].rad = 1000;
-	scene[3].diffuse = newcolor(0.25, 0.25, 0.75);
-	scene[3].emm = newcolor(0, 0, 0);
-
-	scene[4].pos = newvec3(0, 5 + 1000, 0); // top
-	scene[4].rad = 1000;
-	scene[4].diffuse = newcolor(0.75, 0.75, 0.75);
-	scene[4].emm = newcolor(0, 0, 0);
-
-	scene[5].pos = newvec3(-3, -1.6f, -15); // ball 1
-	scene[5].rad = 1.5;
-	scene[5].diffuse = newcolor(0.15, 0.15, 0.4);
-	scene[5].emm = newcolor(0, 0, 0);
-
-	scene[6].pos = newvec3(3, -1.6f, -11); // ball 2
-	scene[6].rad = 1.5;
-	scene[6].diffuse = newcolor(0.8, 0.8, 0.8);
-	scene[6].emm = newcolor(0, 0, 0);
-
-	scene[7].pos = newvec3(0, 19, -11); // light
-	scene[7].rad = 14.2;
-	scene[7].diffuse = newcolor(0, 0, 0);
-	scene[7].emm = newcolor(60, 60, 60);
-
-	return scene;
-}*/
-
 int main()
 {
 	// load shit
-	//loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
-	loadOBJ("models/my_cornell.obj", vec3(), 1);
-	buildBVH();
+	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
+	//loadOBJ("models/teapot.obj", vec3(0, 1, 0), 1);
+	loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.5);
+	//loadOBJ("models/my_cornell.obj", vec3(), 1);
+	//loadOBJ("models/CornellBox-Sphere.obj", vec3(), 1);
+	//buildBVH();
 
-	//int blocksize = 512;
-	//int nblocks = TILE_SIZE / blocksize + (TILE_SIZE % blocksize == 0 ? 0 : 1);
-	int nThreads = 512;
-	int nblocks = 512;
+	int nThreads = IMAGE_WIDTH;
+	int nblocks = IMAGE_HEIGHT;
 
 	// setup the random number generator
 	curandState* randState_device;
-	cudaMalloc(&randState_device, IMAGE_SIZE * sizeof(curandState));
+	cudaMalloc((void**)&randState_device, IMAGE_SIZE * sizeof(curandState));
 	setupCurand <<< nblocks, nThreads >>>(randState_device);
 
 	// set up the camera
@@ -366,7 +325,7 @@ int main()
 	cudaEventRecord(start, 0);
 	{
 		int sampleNum = 1;
-		while (sampleNum <= NUM_SAMPLES)
+		while (sampleNum < NUM_SAMPLES)
 		{
 			auto start = std::chrono::steady_clock::now();
 
@@ -413,6 +372,9 @@ int main()
 	fclose(fp);
 
 	printf("\nfinished");
+
+	cudaFree(randState_device);
+	cudaFree(cam_device);
 
 	getchar();
 

@@ -1,6 +1,7 @@
 #pragma once
 
 __device__ const float MAX_FLOAT = 100000;
+const float MAX_FLOAT_host = 100000;
 
 #include <string>
 #include <vector>
@@ -116,9 +117,12 @@ __device__ float triIntersect(vec3 o, vec3 ray, vec3* verts_device, triangle* tr
 	return t;*/
 }
 
-void loadOBJ(string filename, vec3 origin, float scale)
+void loadOBJ(string filename, vec3 origin, float scale, bool flipNormals = false)
 {
 	printf("Loading .obj file: %s\n", filename.c_str());
+
+	int curVertsOffset = verts.size();
+	int curMatsOffset = mats.size();
 
 	vector<tinyobj::shape_t> shapes;
 	vector<tinyobj::material_t> materials;
@@ -129,7 +133,7 @@ void loadOBJ(string filename, vec3 origin, float scale)
 		printf("\n\nTINYOBJ ERROR: %s \n\n", err.c_str());
 
 	printf("Loaded .obj file. Loading models into RAM.\n");
-	int indexBufferCounter = 0;
+	int indexBufferCounter = verts.size();
 	for (int i = 0; i < shapes.size(); ++i)
 	{
 		// vertex buffer
@@ -155,9 +159,11 @@ void loadOBJ(string filename, vec3 origin, float scale)
 			vec3 v1 = verts[tris[ind].v1];
 			vec3 v2 = verts[tris[ind].v2];
 
-			tris[ind].mat = shapes[i].mesh.material_ids[0];
+			tris[ind].mat = shapes[i].mesh.material_ids[0] + curMatsOffset;
 
 			tris[ind].norm = normalized(cross(v1 - v0, v2 - v0));
+			if (flipNormals)
+				tris[ind].norm = tris[ind].norm * -1;
 			//printf("v0: %f, %f, %f\n", (double)tris[ind].norm.x, (double)tris[ind].norm.y, (double)tris[ind].norm.z);
 		}
 

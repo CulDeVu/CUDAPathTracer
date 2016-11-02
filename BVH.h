@@ -1,6 +1,7 @@
 #pragma once
 
 #include <math.h>
+#include <limits>
 #include <queue>
 
 #include "modelLoader.h"
@@ -47,7 +48,7 @@ float BVHweight(AABB b1, AABB b2)
 	vec3 diff = u.hi - u.lo;
 	return 2 * (diff.x * diff.y + diff.x * diff.z + diff.y * diff.z);
 }
-float rayAABBIntersect(vec3 o, vec3 ray, AABB b)
+__device__ float rayAABBIntersect(vec3 o, vec3 ray, AABB b)
 {
 	float tmin = -MAX_FLOAT;
 	float tmax = MAX_FLOAT;
@@ -294,56 +295,6 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	ret->right = rightNode;
 	ret->numChildNodes = ret->left->numChildNodes + ret->right->numChildNodes + 2;
 	return ret;
-
-	// axis X = 0
-	/*for (int sliceX = 1; sliceX < gridDim - 1; ++sliceX)
-	{
-		AABB left;
-		left.makeNegative();
-		int countLeft = 0;
-		for (int i = 0; i < sliceX; ++i)
-		{
-			for (int j = 0; j < gridDim; ++j)
-			{
-				for (int k = 0; k < gridDim; ++k)
-				{
-					if (grid[i][j][k].hi.x > grid[i][j][k].lo.x)
-					{
-						++countLeft;
-						AABBUnion(&left, &left, &grid[i][j][k]);
-					}
-				}
-			}
-		}
-
-		AABB right;
-		right.makeNegative();
-		int countRight = 0;
-		for (int i = sliceX; i < gridDim; ++i)
-		{
-			for (int j = 0; j < gridDim; ++j)
-			{
-				for (int k = 0; k < gridDim; ++k)
-				{
-					if (grid[i][j][k].hi.x > grid[i][j][k].lo.x)
-					{
-						++countRight;
-						AABBUnion(&right, &right, &grid[i][j][k]);
-					}
-				}
-			}
-		}
-
-		float score = countLeft * left.weight() + countRight * right.weight();
-		if (score < bestScore)
-		{
-			bestSlice = sliceX;
-			bestAxis = 0;
-			bestScore = score;
-		}
-	}*/
-
-	return 0;
 }
 
 BVH_node* BVHTreeToArray(BVH_node* root)
@@ -385,14 +336,7 @@ void buildBVH()
 	for (int i = 0; i < tris.size(); ++i)
 	{
 		AABB b = AABB();
-		/*b.x1 = min(min(verts[tris[i].v0].x, verts[tris[i].v1].x), verts[tris[i].v2].x);
-		b.y1 = min(min(verts[tris[i].v0].y, verts[tris[i].v1].y), verts[tris[i].v2].y);
-		b.z1 = min(min(verts[tris[i].v0].z, verts[tris[i].v1].z), verts[tris[i].v2].z);*/
 		b.lo = min(min(verts[tris[i].v0], verts[tris[i].v1]), verts[tris[i].v2]);
-
-		/*b.x2 = max(max(verts[tris[i].v0].x, verts[tris[i].v1].x), verts[tris[i].v2].x);
-		b.y2 = max(max(verts[tris[i].v0].y, verts[tris[i].v1].y), verts[tris[i].v2].y);
-		b.z2 = max(max(verts[tris[i].v0].z, verts[tris[i].v1].z), verts[tris[i].v2].z);*/
 		b.hi = max(max(verts[tris[i].v0], verts[tris[i].v1]), verts[tris[i].v2]);
 
 		allNodes[i] = BVH_node();
@@ -407,119 +351,3 @@ void buildBVH()
 
 	BVHTreeToArray(root);
 }
-
-/*void addToBVH(BVH_node* root, BVH_node* n)
-{
-	// if the root isn't filled out yet, do that
-	if (root->left == 0)
-	{
-		root->left = n;
-		n->parent = root;
-		return;
-	}
-	if (root->right == 0)
-	{
-		root->right = n;
-		n->parent = root;
-		return;
-	}
-
-	// find the least weighted leaf
-	BVH_node* cur = root;
-	float w1, w2;
-	while (cur->target == -1)
-	{
-		w1 = BVHweight(n->box, cur->left->box);
-		w2 = BVHweight(n->box, cur->right->box);
-
-		if (w1 > w2)
-			cur = cur->left;
-		else
-			cur = cur->right;
-	}
-
-
-	BVH_node* mid = createEmptyBVH_node();
-	mid->parent = cur->parent;
-	mid->left = cur;
-	mid->right = n;
-	if (w1 > w2)
-		cur->parent->left = mid;
-	else
-		cur->parent->right = mid;
-	cur->parent = mid;
-	n->parent = mid;
-
-	// fix AABBs
-	cur = cur->parent;
-	while (cur != 0)
-	{
-		if (cur->left == 0)
-			cur->box = cur->right->box;
-		else if (cur->right == 0)
-			cur->box = cur->left->box;
-		else
-			AABBUnion(&(cur->box), &(cur->left->box), &(cur->right->box));
-
-		cur = cur->parent;
-	}
-}*/
-
-/*void addToBVH(BVH_node* root, BVH_node* n)
-{
-	BVH_node* cur = root;
-	while (cur->left != 0)
-		cur = cur->left;
-
-	cur->left = n;
-}
-
-void addToBVH_recursive(BVH_node* cur, BVH_node* n)
-{
-	BVH_node** addTo = 0;
-
-	float r = rand() % 2;
-	if (r == 0)
-	{
-		if (cur->left == 0)
-			cur->left = n;
-		else
-			addToBVH_recursive(cur->left, n);
-	}
-	else
-	{
-		if (cur->right == 0)
-			cur->right = n;
-		else
-			addToBVH_recursive(cur->right, n);
-	}
-
-	// fix the AABBs
-	if (cur->right == 0)
-	{
-		cur->x1 = cur->left->x1;
-		cur->x2 = cur->left->x2;
-		cur->y1 = cur->left->y1;
-		cur->y2 = cur->left->y2;
-		cur->z1 = cur->left->z1;
-		cur->z2 = cur->left->z2;
-	}
-	else if (cur->left == 0)
-	{
-		cur->x1 = cur->right->x1;
-		cur->x2 = cur->right->x2;
-		cur->y1 = cur->right->y1;
-		cur->y2 = cur->right->y2;
-		cur->z1 = cur->right->z1;
-		cur->z2 = cur->right->z2;
-	}
-	else
-	{
-		cur->x1 = min(cur->left->x1, cur->right->x1);
-		cur->x2 = max(cur->left->x2, cur->right->x2);
-		cur->y1 = min(cur->left->y1, cur->right->y1);
-		cur->y2 = max(cur->left->y2, cur->right->y2);
-		cur->z1 = min(cur->left->z1, cur->right->z1);
-		cur->z2 = max(cur->left->z2, cur->right->z2);
-	}
-}*/

@@ -4,3 +4,5 @@ models/*
 *.exp
 *.obj
 *.pdb
+
+image - *.ppm
