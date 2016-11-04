@@ -1,5 +1,6 @@
 #pragma once
 
+#include <float.h>
 #include <math.h>
 #include <limits>
 #include <queue>
@@ -20,8 +21,8 @@ struct AABB
 
 	void makeNegative()
 	{
-		lo = vec3(1, 1, 1);
-		hi = vec3(-1, -1, -1);
+		lo = vec3(10000, 10000, 10000);
+		hi = vec3(-10000, -10000, -10000);
 	}
 
 	float weight()
@@ -48,9 +49,15 @@ float BVHweight(AABB b1, AABB b2)
 	vec3 diff = u.hi - u.lo;
 	return 2 * (diff.x * diff.y + diff.x * diff.z + diff.y * diff.z);
 }
+__device__ void swap(float& a, float& b)
+{
+	float c = a;
+	a = b;
+	b = c;
+}
 __device__ float rayAABBIntersect(vec3 o, vec3 ray, AABB b)
 {
-	float tmin = -MAX_FLOAT;
+	/*float tmin = -MAX_FLOAT;
 	float tmax = MAX_FLOAT;
 
 	if (ray.x != 0)
@@ -80,8 +87,41 @@ __device__ float rayAABBIntersect(vec3 o, vec3 ray, AABB b)
 		tmax = min(tmax, max(tz1, tz2));
 	}
 
-	if (tmax >= tmin)
+	if (tmax <= tmin)
 		return MAX_FLOAT;
+
+	return tmin;*/
+
+	float tmin = (b.lo.x - o.x) / ray.x;
+	float tmax = (b.hi.x - o.x) / ray.x;
+
+	if (tmin > tmax) swap(tmin, tmax);
+
+	float tymin = (b.lo.y - o.y) / ray.y;
+	float tymax = (b.hi.y - o.y) / ray.y;
+
+	if (tymin > tymax) swap(tymin, tymax);
+	
+	if ((tmin > tymax) || (tymin > tmax))
+		return MAX_FLOAT;
+
+	if (tymin > tmin)
+		tmin = tymin;
+	if (tymax < tmax)
+		tmax = tymax;
+
+	float tzmin = (b.lo.z - o.z) / ray.z;
+	float tzmax = (b.hi.z - o.z) / ray.z;
+
+	if (tzmin > tzmax) swap(tzmin, tzmax);
+
+	if ((tmin > tzmax) || (tzmin > tmax))
+		return MAX_FLOAT;
+
+	if (tzmin > tmin)
+		tmin = tzmin;
+	if (tzmax < tmax)
+		tmax = tzmax;
 
 	return tmin;
 }
@@ -94,6 +134,7 @@ struct BVH_node
 	int numChildNodes;
 
 	int target;
+	int depth;
 
 	BVH_node()
 	{
@@ -101,6 +142,14 @@ struct BVH_node
 		left = right = 0;
 		numChildNodes = 0;
 		target = -1;
+		depth = 0;
+	}
+	~BVH_node()
+	{
+		if (left != 0)
+			delete left;
+		if (right != 0)
+			delete right;
 	}
 };
 struct BVH_array_node
@@ -109,6 +158,12 @@ struct BVH_array_node
 	int left, right;
 	int target;
 };
+struct BVH_array
+{
+	BVH_array_node* root;
+	int size;
+	int depth;
+};
 BVH_node* createEmptyBVH_node()
 {
 	BVH_node* ret = new BVH_node();
@@ -116,6 +171,7 @@ BVH_node* createEmptyBVH_node()
 	ret->left = ret->right = 0;
 
 	ret->target = -1;
+	ret->depth = 0;
 
 	return ret;
 }
@@ -124,10 +180,17 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	// if it's just 1 or 2, just put them in a bvh
 	if (numNodes == 2)
 	{
+		AABB total = AABB();
+		total.makeNegative();
+		AABBUnion(&total, &total, &(nodes[workingList[0]].box));
+		AABBUnion(&total, &total, &(nodes[workingList[1]].box));
+
 		BVH_node* ret = createEmptyBVH_node();
+		ret->box = total;
 		ret->left = &nodes[workingList[0]];
 		ret->right = &nodes[workingList[1]];
 		ret->numChildNodes = 2;
+		ret->depth = 2;
 		return ret;
 	}
 	if (numNodes == 1)
@@ -138,6 +201,12 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 		return &nodes[workingList[0]];
 	}
 	printf("\n\nnumfaces: %d\n", numNodes);
+
+	for (int i = 0; i < numNodes; ++i)
+	{
+		if (workingList[i] == 0)
+			printf("Got a zero!");
+	}
 
 	// find the extents of the nodes given
 	AABB total = AABB();
@@ -195,7 +264,7 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 
 	int bestSlice = 0;
 	int bestAxis = 0;
-	float bestScore = -1;
+	double bestScore = DBL_MAX;
 	int bestLeftCount = 0;
 	int bestRightCount = 0;
 
@@ -245,9 +314,9 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 				}
 			}
 
-			float score = countLeft * left.weight() + countRight * right.weight();
+			double score = countLeft * left.weight() + countRight * right.weight();
 			//float score = left.weight() + right.weight();
-			if (score < bestScore || bestScore < 0)
+			if (score < bestScore)
 			{
 				bestSlice = slice;
 				bestAxis = axis;
@@ -258,7 +327,37 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 			}
 		}
 	}
-	//printf("slice: %d %d\n", bestAxis, bestSlice);
+
+	// in certain cases, there will be no slice that cuts more optimally than not cutting them at all
+	// well too fucking bad we're doing it anyways
+	if (bestLeftCount == 0)
+	{
+		printf("in here!\n");
+		int leftCount = bestRightCount / 2;
+		int rightCount = bestRightCount - leftCount;
+
+		int* leftList = new int[leftCount];
+		int* rightList = new int[rightCount];
+		for (int i = 0; i < leftCount; ++i)
+			leftList[i] = workingList[i];
+		for (int i = 0; i < rightCount; ++i)
+			rightList[i] = workingList[leftCount + i];
+
+		printf("a %d %d\n", leftCount, rightCount);
+		BVH_node* leftNode = buildBVHRecurse(nodes, leftList, leftCount);
+		BVH_node* rightNode = buildBVHRecurse(nodes, rightList, rightCount);
+
+		delete[] leftList;
+		delete[] rightList;
+
+		BVH_node* ret = createEmptyBVH_node();
+		ret->box = total;
+		ret->left = leftNode;
+		ret->right = rightNode;
+		ret->numChildNodes = ret->left->numChildNodes + ret->right->numChildNodes + 2;
+		ret->depth = max(leftNode->depth, rightNode->depth) + 1;
+		return ret;
+	}
 
 	int* leftList = new int[bestLeftCount];
 	int leftCount = 0;
@@ -274,12 +373,13 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 
 		if (center[bestAxis] < bestSlice)
 		{
-			leftList[leftCount] = i;
+			//leftList[leftCount] = workingList[i];
+			leftList[leftCount] = workingList[i];
 			++leftCount;
 		}
 		else
 		{
-			rightList[rightCount] = i;
+			rightList[rightCount] = workingList[i];
 			++rightCount;
 		}
 	}
@@ -291,18 +391,24 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	delete[] rightList;
 
 	BVH_node* ret = createEmptyBVH_node();
+	ret->box = total;
 	ret->left = leftNode;
 	ret->right = rightNode;
 	ret->numChildNodes = ret->left->numChildNodes + ret->right->numChildNodes + 2;
+	ret->depth = max(leftNode->depth, rightNode->depth) + 1;
 	return ret;
 }
 
-BVH_node* BVHTreeToArray(BVH_node* root)
+BVH_array BVHTreeToArray(BVH_node* root)
 {
 	std::queue<BVH_node*> line;
 	line.push(root);
 
-	BVH_array_node* array = new BVH_array_node[root->numChildNodes + 1];
+	BVH_array ret;
+	ret.root = new BVH_array_node[root->numChildNodes + 1];
+	ret.size = root->numChildNodes + 1;
+	ret.depth = root->depth;
+
 	int counter = 0;
 
 	while (!line.empty())
@@ -314,18 +420,26 @@ BVH_node* BVHTreeToArray(BVH_node* root)
 		if (cur->right != 0)
 			line.push(cur->right);
 
-		array[counter].box = cur->box;
-		array[counter].left = counter + line.size() - 1;
-		array[counter].right = counter + line.size();
-		array[counter].target = cur->target;
+		ret.root[counter].box = cur->box;
+		if (cur->target == -1)
+		{
+			ret.root[counter].left = counter + line.size() - 1;
+			ret.root[counter].right = counter + line.size();
+		}
+		else
+		{
+			ret.root[counter].left = 0;
+			ret.root[counter].right = 0;
+		}
+		ret.root[counter].target = cur->target;
 		++counter;
 	}
 
 	printf("array size: %d\n", root->numChildNodes + 1);
-	return 0;
+	return ret;
 }
 
-void buildBVH()
+BVH_array buildBVH()
 {
 	printf("Adding triangles to BVH\n");
 
@@ -349,5 +463,11 @@ void buildBVH()
 	printf("Building the BVH\n");
 	BVH_node* root = buildBVHRecurse(allNodes, workingList, tris.size());
 
-	BVHTreeToArray(root);
+	BVH_array ret = BVHTreeToArray(root);
+
+	/*delete root;
+	delete[] allNodes;
+	delete[] workingList;*/
+
+	return ret;
 }

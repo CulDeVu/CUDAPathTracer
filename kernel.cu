@@ -22,7 +22,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 1000
+#define NUM_SAMPLES 100
 
 #define NUM_SPHERES 8
 
@@ -138,7 +138,7 @@ __device__ color BRDF(materialDesc m, vec3 vDir, vec3 lDir)
 	return mul(m.albedo, 1 / 3.14159);
 }
 
-__device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, curandState* crs)
+__device__ bool drawBVH(pathState* pathState, sceneDesc scene, BVH_array bvh, int* workingList, curandState* crs)
 {
 	if (pathState->bounceNum > 3)
 	{
@@ -146,18 +146,39 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, c
 		return true;
 	}
 
-	// intersect
+	// intersection routine
+	int curWLEnd = 1;
+	workingList[0] = 0;
+
 	float closestT = MAX_FLOAT;
 	int trisID = -1;
-	for (int i = 0; i < scene.numTris; ++i)
+	float max = 0;
+	for (int i = 0; i < curWLEnd; ++i)
 	{
-		float t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, i);
-		if (0 < t && t < closestT)
+		BVH_array_node* cur = &bvh.root[workingList[i]];
+		float t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
+		if (t < MAX_FLOAT - 1)
 		{
+			if (cur->left != 0)
+			{
+				workingList[curWLEnd] = cur->left;
+				workingList[curWLEnd + 1] = cur->right;
+				curWLEnd += 2;
+			}
+			/*else
+			{
+				t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, cur->target);
+				if (0 < t && t < closestT)
+				{
+					closestT = t;
+					trisID = cur->target;
+				}
+			}*/
+			max += 1;
 			closestT = t;
-			trisID = i;
 		}
 	}
+
 	closestT -= 0.001;
 	if (closestT < 0.001)
 	{
@@ -169,6 +190,76 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, c
 		pathState->weight = mul(pathState->weight, color(0, 0, 0));
 		return true;
 	}
+
+	pathState->weight = color(0, max/10.0f, 0);
+	return true;
+}
+
+__device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, BVH_array bvh, int* workingList, curandState* crs)
+{
+	if (pathState->bounceNum > 3)
+	{
+		pathState->weight = color(0, 0, 0);
+		return true;
+	}
+
+	// intersection routine
+	int curWLEnd = 1;
+	workingList[0] = 0;
+
+	float closestT = MAX_FLOAT;
+	int trisID = -1;
+	float max = 0;
+	for (int i = 0; i < curWLEnd; ++i)
+	{
+		BVH_array_node* cur = &bvh.root[workingList[i]];
+		float t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
+		if (t < MAX_FLOAT - 1)
+		{
+			if (cur->left != 0)
+			{
+				workingList[curWLEnd] = cur->left;
+				workingList[curWLEnd + 1] = cur->right;
+				curWLEnd += 2;
+			}
+			else
+			{
+				t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, cur->target);
+				if (0 < t && t < closestT)
+				{
+					closestT = t;
+					trisID = cur->target;
+				}
+			}
+		}
+	}
+
+	// intersect
+	/*float closestT = MAX_FLOAT;
+	int trisID = -1;
+	for (int i = 0; i < scene.numTris; ++i)
+	{
+		float t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, i);
+		if (0 < t && t < closestT)
+		{
+			closestT = t;
+			trisID = i;
+		}
+	}*/
+	closestT -= 0.001;
+	if (closestT < 0.001)
+	{
+		pathState->weight = color(0, 0, 0);
+		return true;
+	}
+	if (closestT > MAX_FLOAT - 1)
+	{
+		pathState->weight = mul(pathState->weight, color(0, 0, 0));
+		return true;
+	}
+
+	//pathState->weight = color(0, max/10.0f, 0);
+	//return true;
 
 	triangle curTris = scene.tris[trisID];
 	materialDesc curMat = scene.mats[curTris.mat];
@@ -230,13 +321,16 @@ __global__ void drawPixel(
 	pathState* pathStateBuffer,
 	sceneDesc scene,
 	camera* cam,
+	BVH_array bvh,
+	int* bvh_stack,
 	curandState* randState)
 {
 	int idx = blockIdx.x*blockDim.x + threadIdx.x;
 	if (idx >= IMAGE_SIZE)
 		return;
 
-	bool result = radianceAlongSingleStep(&pathStateBuffer[idx], scene, &randState[idx]);
+	bool result = radianceAlongSingleStep(&pathStateBuffer[idx], scene, bvh, bvh_stack + bvh.size * idx, &randState[idx]);
+	//bool result = drawBVH(&pathStateBuffer[idx], scene, bvh, bvh_stack + bvh.size * idx, &randState[idx]);
 	if (result)
 	{
 		int curSampleNum = pathStateBuffer[idx].sampleNum;
@@ -259,10 +353,19 @@ int main()
 	// load shit
 	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
 	//loadOBJ("models/teapot.obj", vec3(0, 1, 0), 1);
-	loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.5);
+	//loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.5);
 	//loadOBJ("models/my_cornell.obj", vec3(), 1);
 	//loadOBJ("models/CornellBox-Sphere.obj", vec3(), 1);
-	//buildBVH();
+	getchar();
+	BVH_array bvh = buildBVH();
+	printf("MAX DEPTH OF TREE: %d\n", bvh.depth);
+	getchar();
+	printf("---\n");
+	for (int i = 0; i < bvh.size; ++i)
+	{
+		printf("(%f,%f,%f), (%f,%f,%f), %d,%d, %d\n", bvh.root[i].box.lo.x, bvh.root[i].box.lo.y, bvh.root[i].box.lo.z, bvh.root[i].box.hi.x, bvh.root[i].box.hi.y, bvh.root[i].box.hi.z, bvh.root[i].left, bvh.root[i].right, bvh.root[i].target);
+	}
+	printf("---\n");
 
 	int nThreads = IMAGE_WIDTH;
 	int nblocks = IMAGE_HEIGHT;
@@ -314,6 +417,17 @@ int main()
 	cudaMemcpy(scene_device.mats, &(mats[0]), mats.size() * sizeof(materialDesc), cudaMemcpyHostToDevice);
 	scene_device.numMats = mats.size();
 
+	// BVH
+	BVH_array bvh_device;
+	cudaMalloc((void**)&bvh_device.root, bvh.size * sizeof(BVH_array_node));
+	cudaMemcpy(bvh_device.root, bvh.root, bvh.size * sizeof(BVH_array_node), cudaMemcpyHostToDevice);
+	bvh_device.size = bvh.size;
+
+	// BVH stack
+	int* bvh_stack;
+	cudaMalloc((void**)&bvh_stack, IMAGE_SIZE * bvh.size * sizeof(int));
+	cudaMemset(bvh_stack, 0, IMAGE_SIZE * bvh.size * sizeof(int));
+
 	cudaDeviceSynchronize();
 	checkError();
 
@@ -329,7 +443,7 @@ int main()
 		{
 			auto start = std::chrono::steady_clock::now();
 
-			drawPixel << < nblocks, nThreads >> >(imgBuffer_device, pathStateBuffer_device, scene_device, cam_device, randState_device);
+			drawPixel <<< nblocks, nThreads >>>(imgBuffer_device, pathStateBuffer_device, scene_device, cam_device, bvh_device, bvh_stack, randState_device);
 
 			if (sampleNum % 10 == 0)
 				printf("sample %d finished\n", sampleNum);
