@@ -205,6 +205,7 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 
 	// intersection routine
 	int curWLEnd = 1;
+	bool goingLeft = true;
 	workingList[0] = 0;
 
 	float closestT = MAX_FLOAT;
@@ -213,7 +214,29 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 	for (int i = 0; i < curWLEnd; ++i)
 	{
 		BVH_array_node* cur = &bvh.root[workingList[i]];
-		float t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
+
+		float t;
+		if (cur->left != 0)
+		{
+			t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
+			if (t < MAX_FLOAT - 1)
+			{
+				workingList[curWLEnd] = cur->left;
+				workingList[curWLEnd + 1] = cur->right;
+				curWLEnd += 2;
+			}
+		}
+		else
+		{
+			t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, cur->target);
+			if (0 < t && t < closestT)
+			{
+				closestT = t;
+				trisID = cur->target;
+			}
+		}
+
+		/*float t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
 		if (t < MAX_FLOAT - 1)
 		{
 			if (cur->left != 0)
@@ -231,21 +254,9 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 					trisID = cur->target;
 				}
 			}
-		}
+		}*/
 	}
 
-	// intersect
-	/*float closestT = MAX_FLOAT;
-	int trisID = -1;
-	for (int i = 0; i < scene.numTris; ++i)
-	{
-		float t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, i);
-		if (0 < t && t < closestT)
-		{
-			closestT = t;
-			trisID = i;
-		}
-	}*/
 	closestT -= 0.001;
 	if (closestT < 0.001)
 	{
@@ -257,9 +268,6 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 		pathState->weight = mul(pathState->weight, color(0, 0, 0));
 		return true;
 	}
-
-	//pathState->weight = color(0, max/10.0f, 0);
-	//return true;
 
 	triangle curTris = scene.tris[trisID];
 	materialDesc curMat = scene.mats[curTris.mat];
