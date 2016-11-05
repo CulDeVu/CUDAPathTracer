@@ -22,7 +22,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 100
+#define NUM_SAMPLES 10
 
 #define NUM_SPHERES 8
 
@@ -140,20 +140,11 @@ __device__ color BRDF(materialDesc m, vec3 vDir, vec3 lDir)
 
 __device__ bool drawBVH(pathState* pathState, sceneDesc scene, BVH_array bvh, int* workingList, curandState* crs)
 {
-	if (pathState->bounceNum > 3)
-	{
-		pathState->weight = color(0, 0, 0);
-		return true;
-	}
-
 	// intersection routine
-	int curWLEnd = 1;
 	workingList[0] = 0;
 
-	float closestT = MAX_FLOAT;
-	int trisID = -1;
 	float max = 0;
-	for (int i = 0; i < curWLEnd; ++i)
+	/*for (int i = 0; i < curWLEnd; ++i)
 	{
 		BVH_array_node* cur = &bvh.root[workingList[i]];
 		float t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
@@ -165,33 +156,73 @@ __device__ bool drawBVH(pathState* pathState, sceneDesc scene, BVH_array bvh, in
 				workingList[curWLEnd + 1] = cur->right;
 				curWLEnd += 2;
 			}
-			/*else
-			{
-				t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, cur->target);
-				if (0 < t && t < closestT)
-				{
-					closestT = t;
-					trisID = cur->target;
-				}
-			}*/
 			max += 1;
 			closestT = t;
 		}
+	}*/
+
+	for (int i = 0; 0 <= i; )
+	{
+		float t;
+		BVH_array_node* cur = &bvh.root[workingList[i]];
+
+		//if (cur->left == 0)
+		if (workingList[i] < 0)
+		{
+			--i;
+		}
+		else
+		{
+			//BVH_array_node* cur = &bvh.root[workingList[i]];
+
+			t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
+			if (t < MAX_FLOAT - 1)
+			{
+				workingList[i] = cur->right;
+				workingList[i + 1] = cur->left;
+				++i;
+
+				max += 1;
+			}
+			else
+			{
+				--i;
+			}
+		}
+
+		/*float t;
+		BVH_array_node* cur = &bvh.root[workingList[i]];
+
+		if (cur->left == 0)
+		{
+			--i;
+			firstVisit = false;
+		}
+		else if (firstVisit)
+		{
+			t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
+			if (t < MAX_FLOAT - 1)
+			{
+				workingList[i + 1] = cur->left;
+				++i;
+				firstVisit = true;
+
+				max += 1;
+			}
+			else
+			{
+				--i;
+				firstVisit = false;
+			}
+		}
+		else
+		{
+			workingList[i] = cur->right;
+			firstVisit = true;
+		}*/
 	}
 
-	closestT -= 0.001;
-	if (closestT < 0.001)
-	{
-		pathState->weight = color(0, 0, 0);
-		return true;
-	}
-	if (closestT > MAX_FLOAT - 1)
-	{
-		pathState->weight = mul(pathState->weight, color(0, 0, 0));
-		return true;
-	}
-
-	pathState->weight = color(0, max/10.0f, 0);
+	pathState->weight = color(0, max/45.0f, 0);
 	return true;
 }
 
@@ -204,11 +235,89 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 	}
 
 	// intersection routine
-	int curWLEnd = 1;
-	bool goingLeft = true;
+	bool firstVisit = true;
 	workingList[0] = 0;
 
 	float closestT = MAX_FLOAT;
+	int trisID = -1;
+	for (int i = 0; 0 <= i; )
+	{
+		float t;
+		//BVH_array_node* cur = &bvh.root[workingList[i]];
+
+		if (workingList[i] < 0)
+		{
+			t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, -workingList[i] - 1);
+			if (0 < t && t < closestT)
+			{
+				closestT = t;
+				trisID = -workingList[i] - 1;
+			}
+
+			--i;
+			firstVisit = false;
+		}
+		else
+		{
+			BVH_array_node* cur = &bvh.root[workingList[i]];
+
+			if (firstVisit)
+			{
+				t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
+				if (t < MAX_FLOAT - 1)
+				{
+					workingList[i + 1] = cur->left;
+					++i;
+					firstVisit = true;
+				}
+				else
+				{
+					--i;
+					firstVisit = false;
+				}
+			}
+			else
+			{
+				workingList[i] = cur->right;
+				firstVisit = true;
+			}
+		}
+
+		/*if (cur->left == 0)
+		{
+			t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, cur->target);
+			if (0 < t && t < closestT)
+			{
+				closestT = t;
+				trisID = cur->target;
+			}
+
+			--i;
+			firstVisit = false;
+		}
+		else if (firstVisit)
+		{
+			t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
+			if (t < MAX_FLOAT - 1)
+			{
+				workingList[i + 1] = cur->left;
+				++i;
+				firstVisit = true;
+			}
+			else
+			{
+				--i;
+				firstVisit = false;
+			}
+		}
+		else
+		{
+			workingList[i] = cur->right;
+			firstVisit = true;
+		}*/
+	}
+
+	/*float closestT = MAX_FLOAT;
 	int trisID = -1;
 	float max = 0;
 	for (int i = 0; i < curWLEnd; ++i)
@@ -235,27 +344,7 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 				trisID = cur->target;
 			}
 		}
-
-		/*float t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
-		if (t < MAX_FLOAT - 1)
-		{
-			if (cur->left != 0)
-			{
-				workingList[curWLEnd] = cur->left;
-				workingList[curWLEnd + 1] = cur->right;
-				curWLEnd += 2;
-			}
-			else
-			{
-				t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, cur->target);
-				if (0 < t && t < closestT)
-				{
-					closestT = t;
-					trisID = cur->target;
-				}
-			}
-		}*/
-	}
+	}*/
 
 	closestT -= 0.001;
 	if (closestT < 0.001)
@@ -337,8 +426,9 @@ __global__ void drawPixel(
 	if (idx >= IMAGE_SIZE)
 		return;
 
-	bool result = radianceAlongSingleStep(&pathStateBuffer[idx], scene, bvh, bvh_stack + bvh.size * idx, &randState[idx]);
-	//bool result = drawBVH(&pathStateBuffer[idx], scene, bvh, bvh_stack + bvh.size * idx, &randState[idx]);
+	size_t bvhIndex = (size_t)(bvh.depth) * idx;
+	bool result = radianceAlongSingleStep(&pathStateBuffer[idx], scene, bvh, bvh_stack + bvhIndex, &randState[idx]);
+	//bool result = drawBVH(&pathStateBuffer[idx], scene, bvh, bvh_stack + bvhIndex, &randState[idx]);
 	if (result)
 	{
 		int curSampleNum = pathStateBuffer[idx].sampleNum;
@@ -361,6 +451,7 @@ int main()
 	// load shit
 	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
 	//loadOBJ("models/teapot.obj", vec3(0, 1, 0), 1);
+	//loadOBJ("models/dragon_simple.obj", vec3(0, 1, 0), 1);
 	//loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.5);
 	//loadOBJ("models/my_cornell.obj", vec3(), 1);
 	//loadOBJ("models/CornellBox-Sphere.obj", vec3(), 1);
@@ -430,11 +521,12 @@ int main()
 	cudaMalloc((void**)&bvh_device.root, bvh.size * sizeof(BVH_array_node));
 	cudaMemcpy(bvh_device.root, bvh.root, bvh.size * sizeof(BVH_array_node), cudaMemcpyHostToDevice);
 	bvh_device.size = bvh.size;
+	bvh_device.depth = bvh.depth;
 
 	// BVH stack
 	int* bvh_stack;
-	cudaMalloc((void**)&bvh_stack, IMAGE_SIZE * bvh.size * sizeof(int));
-	cudaMemset(bvh_stack, 0, IMAGE_SIZE * bvh.size * sizeof(int));
+	cudaMalloc((void**)&bvh_stack, IMAGE_SIZE * bvh.depth * sizeof(int));
+	cudaMemset(bvh_stack, 0, IMAGE_SIZE * bvh.depth * sizeof(int));
 
 	cudaDeviceSynchronize();
 	checkError();

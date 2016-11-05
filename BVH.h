@@ -404,14 +404,17 @@ BVH_array BVHTreeToArray(BVH_node* root)
 	std::queue<BVH_node*> line;
 	line.push(root);
 
+	int arraySize = (root->numChildNodes + 1) / 2;
+	//int arraySize = (root->numChildNodes + 1);
+
 	BVH_array ret;
-	ret.root = new BVH_array_node[root->numChildNodes + 1];
-	ret.size = root->numChildNodes + 1;
+	ret.root = new BVH_array_node[arraySize];
+	ret.size = arraySize;
 	ret.depth = root->depth;
 
 	int counter = 0;
 
-	while (!line.empty())
+	/*while (!line.empty())
 	{
 		BVH_node* cur = line.front();
 		line.pop();
@@ -420,7 +423,6 @@ BVH_array BVHTreeToArray(BVH_node* root)
 		if (cur->right != 0)
 			line.push(cur->right);
 
-		ret.root[counter].box = cur->box;
 		if (cur->target == -1)
 		{
 			ret.root[counter].left = counter + line.size() - 1;
@@ -431,11 +433,44 @@ BVH_array BVHTreeToArray(BVH_node* root)
 			ret.root[counter].left = 0;
 			ret.root[counter].right = 0;
 		}
+
+		ret.root[counter].box = cur->box;
+		ret.root[counter].target = cur->target;
+		++counter;
+	}*/
+
+	while (!line.empty())
+	{
+		BVH_node* cur = line.front();
+		line.pop();
+		if (cur->left != 0)
+		{
+			if (cur->left->target == -1)
+			{
+				line.push(cur->left);
+				ret.root[counter].left = counter + line.size();
+			}
+			else
+				ret.root[counter].left = -cur->left->target - 1;
+		}
+		if (cur->right != 0)
+		{
+			if (cur->right->target == -1)
+			{
+				line.push(cur->right);
+				ret.root[counter].right = counter + line.size();
+			}
+			else
+				ret.root[counter].right = -cur->right->target - 1;
+		}
+
+		ret.root[counter].box = cur->box;
 		ret.root[counter].target = cur->target;
 		++counter;
 	}
 
 	printf("array size: %d\n", root->numChildNodes + 1);
+	printf("actual array size: %d\n", counter);
 	return ret;
 }
 
