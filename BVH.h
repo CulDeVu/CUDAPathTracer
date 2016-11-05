@@ -156,7 +156,6 @@ struct BVH_array_node
 {
 	AABB box;
 	int left, right;
-	int target;
 };
 struct BVH_array
 {
@@ -414,31 +413,6 @@ BVH_array BVHTreeToArray(BVH_node* root)
 
 	int counter = 0;
 
-	/*while (!line.empty())
-	{
-		BVH_node* cur = line.front();
-		line.pop();
-		if (cur->left != 0)
-			line.push(cur->left);
-		if (cur->right != 0)
-			line.push(cur->right);
-
-		if (cur->target == -1)
-		{
-			ret.root[counter].left = counter + line.size() - 1;
-			ret.root[counter].right = counter + line.size();
-		}
-		else
-		{
-			ret.root[counter].left = 0;
-			ret.root[counter].right = 0;
-		}
-
-		ret.root[counter].box = cur->box;
-		ret.root[counter].target = cur->target;
-		++counter;
-	}*/
-
 	while (!line.empty())
 	{
 		BVH_node* cur = line.front();
@@ -465,7 +439,6 @@ BVH_array BVHTreeToArray(BVH_node* root)
 		}
 
 		ret.root[counter].box = cur->box;
-		ret.root[counter].target = cur->target;
 		++counter;
 	}
 

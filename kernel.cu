@@ -144,29 +144,12 @@ __device__ bool drawBVH(pathState* pathState, sceneDesc scene, BVH_array bvh, in
 	workingList[0] = 0;
 
 	float max = 0;
-	/*for (int i = 0; i < curWLEnd; ++i)
-	{
-		BVH_array_node* cur = &bvh.root[workingList[i]];
-		float t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
-		if (t < MAX_FLOAT - 1)
-		{
-			if (cur->left != 0)
-			{
-				workingList[curWLEnd] = cur->left;
-				workingList[curWLEnd + 1] = cur->right;
-				curWLEnd += 2;
-			}
-			max += 1;
-			closestT = t;
-		}
-	}*/
 
 	for (int i = 0; 0 <= i; )
 	{
 		float t;
 		BVH_array_node* cur = &bvh.root[workingList[i]];
 
-		//if (cur->left == 0)
 		if (workingList[i] < 0)
 		{
 			--i;
@@ -189,37 +172,6 @@ __device__ bool drawBVH(pathState* pathState, sceneDesc scene, BVH_array bvh, in
 				--i;
 			}
 		}
-
-		/*float t;
-		BVH_array_node* cur = &bvh.root[workingList[i]];
-
-		if (cur->left == 0)
-		{
-			--i;
-			firstVisit = false;
-		}
-		else if (firstVisit)
-		{
-			t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
-			if (t < MAX_FLOAT - 1)
-			{
-				workingList[i + 1] = cur->left;
-				++i;
-				firstVisit = true;
-
-				max += 1;
-			}
-			else
-			{
-				--i;
-				firstVisit = false;
-			}
-		}
-		else
-		{
-			workingList[i] = cur->right;
-			firstVisit = true;
-		}*/
 	}
 
 	pathState->weight = color(0, max/45.0f, 0);
@@ -271,69 +223,7 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 				--i;
 			}
 		}
-
-		/*if (cur->left == 0)
-		{
-			t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, cur->target);
-			if (0 < t && t < closestT)
-			{
-				closestT = t;
-				trisID = cur->target;
-			}
-
-			--i;
-			firstVisit = false;
-		}
-		else if (firstVisit)
-		{
-			t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
-			if (t < MAX_FLOAT - 1)
-			{
-				workingList[i + 1] = cur->left;
-				++i;
-				firstVisit = true;
-			}
-			else
-			{
-				--i;
-				firstVisit = false;
-			}
-		}
-		else
-		{
-			workingList[i] = cur->right;
-			firstVisit = true;
-		}*/
 	}
-
-	/*float closestT = MAX_FLOAT;
-	int trisID = -1;
-	float max = 0;
-	for (int i = 0; i < curWLEnd; ++i)
-	{
-		BVH_array_node* cur = &bvh.root[workingList[i]];
-
-		float t;
-		if (cur->left != 0)
-		{
-			t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
-			if (t < MAX_FLOAT - 1)
-			{
-				workingList[curWLEnd] = cur->left;
-				workingList[curWLEnd + 1] = cur->right;
-				curWLEnd += 2;
-			}
-		}
-		else
-		{
-			t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, cur->target);
-			if (0 < t && t < closestT)
-			{
-				closestT = t;
-				trisID = cur->target;
-			}
-		}
-	}*/
 
 	closestT -= 0.001;
 	if (closestT < 0.001)
@@ -415,7 +305,7 @@ __global__ void drawPixel(
 	if (idx >= IMAGE_SIZE)
 		return;
 
-	size_t bvhIndex = (size_t)(bvh.depth) * idx;
+	size_t bvhIndex = (size_t)(bvh.depth) * (size_t)(idx);
 	bool result = radianceAlongSingleStep(&pathStateBuffer[idx], scene, bvh, bvh_stack + bvhIndex, &randState[idx]);
 	//bool result = drawBVH(&pathStateBuffer[idx], scene, bvh, bvh_stack + bvhIndex, &randState[idx]);
 	if (result)
@@ -440,7 +330,7 @@ int main()
 	// load shit
 	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
 	//loadOBJ("models/teapot.obj", vec3(0, 1, 0), 1);
-	//loadOBJ("models/dragon_simple.obj", vec3(0, 1, 0), 1);
+	loadOBJ("models/dragon_simple.obj", vec3(0, 1, 0), 1);
 	//loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.5);
 	//loadOBJ("models/my_cornell.obj", vec3(), 1);
 	//loadOBJ("models/CornellBox-Sphere.obj", vec3(), 1);
@@ -451,7 +341,7 @@ int main()
 	printf("---\n");
 	for (int i = 0; i < bvh.size; ++i)
 	{
-		printf("(%f,%f,%f), (%f,%f,%f), %d,%d, %d\n", bvh.root[i].box.lo.x, bvh.root[i].box.lo.y, bvh.root[i].box.lo.z, bvh.root[i].box.hi.x, bvh.root[i].box.hi.y, bvh.root[i].box.hi.z, bvh.root[i].left, bvh.root[i].right, bvh.root[i].target);
+		printf("(%f,%f,%f), (%f,%f,%f), %d,%d\n", bvh.root[i].box.lo.x, bvh.root[i].box.lo.y, bvh.root[i].box.lo.z, bvh.root[i].box.hi.x, bvh.root[i].box.hi.y, bvh.root[i].box.hi.z, bvh.root[i].left, bvh.root[i].right);
 	}
 	printf("---\n");
 
