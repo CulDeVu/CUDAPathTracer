@@ -22,7 +22,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 10
+#define NUM_SAMPLES 100
 
 #define NUM_SPHERES 8
 
@@ -235,7 +235,6 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 	}
 
 	// intersection routine
-	bool firstVisit = true;
 	workingList[0] = 0;
 
 	float closestT = MAX_FLOAT;
@@ -255,31 +254,21 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 			}
 
 			--i;
-			firstVisit = false;
 		}
 		else
 		{
 			BVH_array_node* cur = &bvh.root[workingList[i]];
 
-			if (firstVisit)
+			t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
+			if (t < MAX_FLOAT - 1)
 			{
-				t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
-				if (t < MAX_FLOAT - 1)
-				{
-					workingList[i + 1] = cur->left;
-					++i;
-					firstVisit = true;
-				}
-				else
-				{
-					--i;
-					firstVisit = false;
-				}
+				workingList[i] = cur->right;
+				workingList[i + 1] = cur->left;
+				++i;
 			}
 			else
 			{
-				workingList[i] = cur->right;
-				firstVisit = true;
+				--i;
 			}
 		}
 
