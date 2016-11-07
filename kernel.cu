@@ -24,9 +24,7 @@
 #define TILE_SIZE (IMAGE_SIZE)
 #define NUM_SAMPLES 100
 
-#define NUM_SPHERES 8
-
-//#define SAFE_CALL(x) {auto s=std::chrono::steady_clock::now();x;cudaDeviceSynchronize(); auto e=std::chrono::stead_clock::now();double diff=std::chrono::duration<double>(e-s).count();if(diff>2.0)printf("-----Possible timeout in %s of %f seconds-----\n",#x,diff);}
+#define MAX_BVH_DEPTH 64
 
 struct ray
 {
@@ -47,8 +45,6 @@ void checkError()
 	if (cudaSuccess != err)
 		printf("error! ID: %d, \"%s\"\n", err, cudaGetErrorString(err));
 }
-
-sceneDesc scene_device;
 
 __device__ ray getCameraRay(int idx)
 {
@@ -144,7 +140,6 @@ __device__ bool drawBVH(pathState* pathState, sceneDesc scene, BVH_array bvh, in
 	workingList[0] = 0;
 
 	float max = 0;
-
 	for (int i = 0; 0 <= i; )
 	{
 		float t;
@@ -174,31 +169,41 @@ __device__ bool drawBVH(pathState* pathState, sceneDesc scene, BVH_array bvh, in
 		}
 	}
 
-	pathState->weight = color(0, max/45.0f, 0);
+	float H = 300 * (1 - max/bvh.depth) / 60;
+	float X = 1 - abs(fmod(H, 2.0f) - 1);
+	color c;
+	if (H <= 1)
+		c = color(1, X, 0);
+	else if (H <= 2)
+		c = color(X, 1, 0);
+	else if (H <= 3)
+		c = color(0, 1, X);
+	else
+		c = color(0, 0, 0);
+
+	pathState->weight = c;
 	return true;
 }
 
-__device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, BVH_array bvh, int* workingList, curandState* crs)
+struct triIntersection
 {
-	if (pathState->bounceNum > 3)
-	{
-		pathState->weight = color(0, 0, 0);
-		return true;
-	}
-
-	// intersection routine
+	int32_t triIndex;
+	float t;
+};
+__device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh)
+{
+	int workingList[MAX_BVH_DEPTH];
 	workingList[0] = 0;
 
 	float closestT = MAX_FLOAT;
 	int trisID = -1;
-	for (int i = 0; 0 <= i; )
-	{
-		float t;
-		//BVH_array_node* cur = &bvh.root[workingList[i]];
 
+	int i = 0;
+	while (i >= 0)
+	{
 		if (workingList[i] < 0)
 		{
-			t = triIntersect(pathState->vDir.o, pathState->vDir.dir, scene.verts, scene.tris, -workingList[i] - 1);
+			float t = triIntersect(r.o, r.dir, scene.verts, scene.tris, -workingList[i] - 1);
 			if (0 < t && t < closestT)
 			{
 				closestT = t;
@@ -211,7 +216,7 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 		{
 			BVH_array_node* cur = &bvh.root[workingList[i]];
 
-			t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
+			float t = rayAABBIntersect(r.o, r.dir, cur->box);
 			if (t < MAX_FLOAT - 1)
 			{
 				workingList[i] = cur->right;
@@ -224,6 +229,25 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 			}
 		}
 	}
+
+	triIntersection ret;
+	ret.triIndex = trisID;
+	ret.t = closestT;
+	return ret;
+}
+
+__device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, BVH_array bvh, int* workingList, curandState* crs)
+{
+	if (pathState->bounceNum > 3)
+	{
+		pathState->weight = color(0, 0, 0);
+		return true;
+	}
+
+	// intersection routine
+	triIntersection intersect = trace(pathState->vDir, scene, bvh);
+	int trisID = intersect.triIndex;
+	float closestT = intersect.t;
 
 	closestT -= 0.001;
 	if (closestT < 0.001)
@@ -311,13 +335,12 @@ __global__ void drawPixel(
 	if (result)
 	{
 		int curSampleNum = pathStateBuffer[idx].sampleNum;
-		color prevSum = denormalized(imgBuff[idx]);
+		color prevSum = imgBuff[idx];
 		imgBuff[idx] = add(mul(prevSum, (float)(curSampleNum - 1) / curSampleNum), mul(pathStateBuffer[idx].weight, 1.0f / curSampleNum));
 
 		float y = (float)((int)(idx / IMAGE_WIDTH)) / IMAGE_HEIGHT - 0.5;
 		float x = (float)(idx % IMAGE_WIDTH) / IMAGE_WIDTH - 0.5;
 
-		imgBuff[idx] = normalized(imgBuff[idx]);
 		pathStateBuffer[idx].vDir = randCameraRay(cam, vec3(x, y, 0), &randState[idx]);
 		pathStateBuffer[idx].weight = color(1, 1, 1);
 		pathStateBuffer[idx].bounceNum = 0;
@@ -328,22 +351,33 @@ __global__ void drawPixel(
 int main()
 {
 	// load shit
+	//loadOBJ("models/sponza.obj", vec3(), 1);
 	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
 	//loadOBJ("models/teapot.obj", vec3(0, 1, 0), 1);
-	loadOBJ("models/dragon_simple.obj", vec3(0, 1, 0), 1);
+	//loadOBJ("models/dragon_simple.obj", vec3(0, 1, 0), 1);
 	//loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.5);
 	//loadOBJ("models/my_cornell.obj", vec3(), 1);
 	//loadOBJ("models/CornellBox-Sphere.obj", vec3(), 1);
-	getchar();
+	/*for (int i = 0; i < 200; ++i)
+		loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.25);
+	loadOBJ("models/cube.obj", vec3(0, 1, 0), 0.5);*/
+	//getchar();
 	BVH_array bvh = buildBVH();
 	printf("MAX DEPTH OF TREE: %d\n", bvh.depth);
-	getchar();
+	printf("size of triangle: %zd", sizeof(triangle));
+	/*getchar();
 	printf("---\n");
 	for (int i = 0; i < bvh.size; ++i)
 	{
 		printf("(%f,%f,%f), (%f,%f,%f), %d,%d\n", bvh.root[i].box.lo.x, bvh.root[i].box.lo.y, bvh.root[i].box.lo.z, bvh.root[i].box.hi.x, bvh.root[i].box.hi.y, bvh.root[i].box.hi.z, bvh.root[i].left, bvh.root[i].right);
 	}
-	printf("---\n");
+	printf("---\n");*/
+
+	if (bvh.depth >= MAX_BVH_DEPTH)
+	{
+		printf("Critical Error: BVH depth is too big\n");
+		return 0;
+	}
 
 	int nThreads = IMAGE_WIDTH;
 	int nblocks = IMAGE_HEIGHT;
@@ -381,6 +415,7 @@ int main()
 	setupPathStateBuffer <<< nblocks, nThreads >>>(pathStateBuffer_device, cam_device, randState_device);
 
 	// vertex buffer
+	sceneDesc scene_device;
 	cudaMalloc((void**)&scene_device.verts, verts.size() * sizeof(vec3));
 	cudaMemcpy(scene_device.verts, &(verts[0]), verts.size() * sizeof(vec3), cudaMemcpyHostToDevice);
 	scene_device.numVerts = verts.size();
@@ -458,7 +493,7 @@ int main()
 		for (int x = IMAGE_WIDTH - 1; x >= 0; --x)
 		{
 			int idx = y * IMAGE_WIDTH + x;
-			color c = imgBuffer_host[idx];
+			color c = gammaCorrect(normalized(imgBuffer_host[idx]), 1 / 2.2);
 			fprintf(fp, "%d %d %d ", (int)(c.r * 255), (int)(c.g * 255), (int)(c.b * 255));
 		}
 	}

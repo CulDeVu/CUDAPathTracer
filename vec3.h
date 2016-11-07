@@ -28,6 +28,10 @@ struct vec3
 	{
 		return vec3(x / a, y / a, z / a);
 	}
+	__host__ __device__ vec3 operator/(const int& a)
+	{
+		return vec3(x / (float)a, y / (float)a, z / (float)a);
+	}
 
 	__host__ __device__ float operator[](int i) const
 	{

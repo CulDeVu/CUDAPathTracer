@@ -15,9 +15,9 @@ using std::vector;
 
 struct triangle
 {
-	int v0, v1, v2;
+	int32_t v0, v1, v2;
 	vec3 norm;
-	int mat;
+	int32_t mat;
 };
 
 struct materialDesc
@@ -26,11 +26,13 @@ struct materialDesc
 	color emmision;
 };
 
+// number of triangles is restricted to the number of signed positive 32bit integers
+// so indexing can be done in 32bit
 struct sceneDesc
 {
-	int numVerts;
-	int numTris;
-	int numMats;
+	int32_t numVerts;
+	int32_t numTris;
+	int32_t numMats;
 
 	vec3* verts;
 	triangle* tris;
@@ -121,9 +123,6 @@ void loadOBJ(string filename, vec3 origin, float scale, bool flipNormals = false
 {
 	printf("Loading .obj file: %s\n", filename.c_str());
 
-	int curVertsOffset = verts.size();
-	int curMatsOffset = mats.size();
-
 	vector<tinyobj::shape_t> shapes;
 	vector<tinyobj::material_t> materials;
 
@@ -133,14 +132,16 @@ void loadOBJ(string filename, vec3 origin, float scale, bool flipNormals = false
 		printf("\n\nTINYOBJ ERROR: %s \n\n", err.c_str());
 
 	printf("Loaded .obj file. Loading models into RAM.\n");
-	int indexBufferCounter = verts.size();
 	for (int i = 0; i < shapes.size(); ++i)
 	{
+		size_t indexBufferOffset = verts.size();
+		size_t matsOffset = mats.size();
+
 		// vertex buffer
 		for (int v = 0; v < shapes[i].mesh.positions.size() / 3; ++v)
 		{
 			verts.push_back(vec3());
-			int ind = verts.size() - 1;
+			size_t ind = verts.size() - 1;
 			verts[ind].x = shapes[i].mesh.positions[3 * v + 0] * scale + origin.x;
 			verts[ind].y = shapes[i].mesh.positions[3 * v + 1] * scale + origin.y;
 			verts[ind].z = shapes[i].mesh.positions[3 * v + 2] * scale + origin.z;
@@ -150,24 +151,22 @@ void loadOBJ(string filename, vec3 origin, float scale, bool flipNormals = false
 		for (int v = 0; v < shapes[i].mesh.indices.size() / 3; ++v)
 		{
 			tris.push_back(triangle());
-			int ind = tris.size() - 1;
-			tris[ind].v0 = shapes[i].mesh.indices[3 * v + 0] + indexBufferCounter;
-			tris[ind].v1 = shapes[i].mesh.indices[3 * v + 1] + indexBufferCounter;
-			tris[ind].v2 = shapes[i].mesh.indices[3 * v + 2] + indexBufferCounter;
+			size_t ind = tris.size() - 1;
+			tris[ind].v0 = shapes[i].mesh.indices[3 * v + 0] + indexBufferOffset;
+			tris[ind].v1 = shapes[i].mesh.indices[3 * v + 1] + indexBufferOffset;
+			tris[ind].v2 = shapes[i].mesh.indices[3 * v + 2] + indexBufferOffset;
 
 			vec3 v0 = verts[tris[ind].v0];
 			vec3 v1 = verts[tris[ind].v1];
 			vec3 v2 = verts[tris[ind].v2];
 
-			tris[ind].mat = shapes[i].mesh.material_ids[0] + curMatsOffset;
+			tris[ind].mat = shapes[i].mesh.material_ids[0] + matsOffset;
 
 			tris[ind].norm = normalized(cross(v1 - v0, v2 - v0));
 			if (flipNormals)
 				tris[ind].norm = tris[ind].norm * -1;
 			//printf("v0: %f, %f, %f\n", (double)tris[ind].norm.x, (double)tris[ind].norm.y, (double)tris[ind].norm.z);
 		}
-
-		indexBufferCounter += shapes[i].mesh.positions.size() / 3;
 	}
 
 	printf("Loading materials\n");

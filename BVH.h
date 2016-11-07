@@ -10,9 +10,6 @@
 
 struct AABB
 {
-	/*float x1, x2,
-		y1, y2,
-		z1, z2;*/
 	vec3 lo, hi;
 
 	AABB()
@@ -33,12 +30,6 @@ struct AABB
 };
 void AABBUnion(AABB* ret, AABB* b1, AABB* b2)
 {
-	/*ret->x1 = min(b1->x1, b2->x1);
-	ret->x2 = max(b1->x2, b2->x2);
-	ret->y1 = min(b1->y1, b2->y1);
-	ret->y2 = max(b1->y2, b2->y2);
-	ret->z1 = min(b1->z1, b2->z1);
-	ret->z2 = max(b1->z2, b2->z2);*/
 	ret->lo = min(b1->lo, b2->lo);
 	ret->hi = max(b1->hi, b2->hi);
 }
@@ -155,7 +146,7 @@ struct BVH_node
 struct BVH_array_node
 {
 	AABB box;
-	int left, right;
+	int32_t left, right;
 };
 struct BVH_array
 {
@@ -199,13 +190,6 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 		return ret;*/
 		return &nodes[workingList[0]];
 	}
-	printf("\n\nnumfaces: %d\n", numNodes);
-
-	for (int i = 0; i < numNodes; ++i)
-	{
-		if (workingList[i] == 0)
-			printf("Got a zero!");
-	}
 
 	// find the extents of the nodes given
 	AABB total = AABB();
@@ -214,7 +198,6 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	{
 		AABBUnion(&total, &total, &(nodes[workingList[i]].box));
 	}
-	printf("width of everything: %f\n", total.hi.x - total.lo.x);
 
 	// build the grid
 	const int gridDim = 8;
@@ -237,9 +220,9 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	for (int i = 0; i < numNodes; ++i)
 	{
 		vec3 center = ((nodes[workingList[i]].box.hi + nodes[workingList[i]].box.lo) / 2 - total.lo);
-		int cx = min(gridDim - 1, max(0, (int)(center.x / dimUnits.x)));
-		int cy = min(gridDim - 1, max(0, (int)(center.y / dimUnits.y)));
-		int cz = min(gridDim - 1, max(0, (int)(center.z / dimUnits.z)));
+		int cx = (int)min(gridDim - 1, max(0, (int)(center.x / dimUnits.x)));
+		int cy = (int)min(gridDim - 1, max(0, (int)(center.y / dimUnits.y)));
+		int cz = (int)min(gridDim - 1, max(0, (int)(center.z / dimUnits.z)));
 
 		AABBUnion(&grid[cx][cy][cz], &grid[cx][cy][cz], &nodes[i].box);
 		countGrid[cx][cy][cz] += 1;
@@ -322,7 +305,6 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 				bestScore = score;
 				bestLeftCount = countLeft;
 				bestRightCount = countRight;
-				printf("t %d %d %f %d %d\n", bestSlice, bestAxis, bestScore, bestLeftCount, bestRightCount);
 			}
 		}
 	}
@@ -331,7 +313,6 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	// well too fucking bad we're doing it anyways
 	if (bestLeftCount == 0)
 	{
-		printf("in here!\n");
 		int leftCount = bestRightCount / 2;
 		int rightCount = bestRightCount - leftCount;
 
@@ -342,7 +323,6 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 		for (int i = 0; i < rightCount; ++i)
 			rightList[i] = workingList[leftCount + i];
 
-		printf("a %d %d\n", leftCount, rightCount);
 		BVH_node* leftNode = buildBVHRecurse(nodes, leftList, leftCount);
 		BVH_node* rightNode = buildBVHRecurse(nodes, rightList, rightCount);
 
@@ -403,7 +383,7 @@ BVH_array BVHTreeToArray(BVH_node* root)
 	std::queue<BVH_node*> line;
 	line.push(root);
 
-	int arraySize = (root->numChildNodes + 1) / 2;
+	int32_t arraySize = (root->numChildNodes + 1) / 2;
 	//int arraySize = (root->numChildNodes + 1);
 
 	BVH_array ret;
@@ -411,7 +391,7 @@ BVH_array BVHTreeToArray(BVH_node* root)
 	ret.size = arraySize;
 	ret.depth = root->depth;
 
-	int counter = 0;
+	int32_t counter = 0;
 
 	while (!line.empty())
 	{

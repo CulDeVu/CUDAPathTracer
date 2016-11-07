@@ -30,7 +30,7 @@ __device__ color mul(color c, color d)
 {
 	return color(c.r * d.r, c.g * d.g, c.b * d.b);
 }
-__device__ color normalized(color c)
+__host__ __device__ color normalized(color c)
 {
 	return color(c.r / (c.r + 1), c.g / (c.g + 1), c.b / (c.b + 1));
 }
@@ -38,5 +38,11 @@ __device__ color denormalized(color c)
 {
 	return color(c.r / (1 - c.r), c.g / (1 - c.g), c.b / (1 - c.b));
 }
+
+color gammaCorrect(color c, float a)
+{
+	return color(pow(c.r, a), pow(c.g, a), pow(c.b, a));
+}
+
 
 #endif
