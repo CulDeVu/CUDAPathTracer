@@ -15,6 +15,11 @@ struct color
 	__host__ __device__ color()
 		: color(0, 0, 0)
 	{}
+
+	__host__ __device__ color operator*(const float& a)
+	{
+		return color(r * a, g * a, b * a);
+	}
 };
 
 __device__ color add(color a, color b)

@@ -1,12 +1,10 @@
 #pragma once
 
-__device__ const float MAX_FLOAT = 100000;
-const float MAX_FLOAT_host = 100000;
-
 #include <string>
 #include <vector>
 
 #include "color.h"
+#include "limits.h"
 #include "tiny_obj_loader.h"
 #include "vec3.h"
 
@@ -30,24 +28,29 @@ struct materialDesc
 // so indexing can be done in 32bit
 struct sceneDesc
 {
-	int32_t numVerts;
-	int32_t numTris;
-	int32_t numMats;
+	uint32_t numVerts;
+	uint32_t numTris;
+	uint32_t numMats;
+	uint32_t numLights;
 
 	vec3* verts;
 	triangle* tris;
 	materialDesc* mats;
+	uint32_t* lights;
+	float totalLightArea;
 };
 
 vector<vec3> verts;
 vector<triangle> tris;
 vector<materialDesc> mats;
+vector<int32_t> lights;
+float totalLightArea = 0;
 
-__device__ float triIntersect(vec3 o, vec3 ray, vec3* verts_device, triangle* tris_device, int triID)
+__device__ float triIntersect(vec3 o, vec3 ray, vec3* verts_device, triangle* tris_device)
 {
-	vec3 v0 = verts_device[tris_device[triID].v0];
-	vec3 v1 = verts_device[tris_device[triID].v1];
-	vec3 v2 = verts_device[tris_device[triID].v2];
+	vec3 v0 = verts_device[tris_device->v0];
+	vec3 v1 = verts_device[tris_device->v1];
+	vec3 v2 = verts_device[tris_device->v2];
 
 	//vec3 N = tris_device[triID].norm;
 
@@ -58,7 +61,7 @@ __device__ float triIntersect(vec3 o, vec3 ray, vec3* verts_device, triangle* tr
 	float a = dot(e1, q);
 
 	// nearly parallel
-	if (abs(a) < 0.001)
+	if (abs(a) < 0.00001)
 		return MAX_FLOAT;
 
 	vec3 s = (o - v0) / a;
@@ -131,11 +134,34 @@ void loadOBJ(string filename, vec3 origin, float scale, bool flipNormals = false
 	if (!err.empty())
 		printf("\n\nTINYOBJ ERROR: %s \n\n", err.c_str());
 
+	printf("Loading materials\n");
+	for (int i = 0; i < materials.size(); ++i)
+	{
+		materialDesc m;
+
+		m.albedo = color(materials[i].diffuse[0], materials[i].diffuse[1], materials[i].diffuse[2]);
+		m.emmision = color(materials[i].emission[0], materials[i].emission[1], materials[i].emission[2]);
+
+		mats.push_back(m);
+	}
+
+	uint32_t matsOffset = (int32_t)mats.size();
+
+	printf("Loading materials\n");
+	for (int i = 0; i < materials.size(); ++i)
+	{
+		materialDesc m;
+
+		m.albedo = color(materials[i].diffuse[0], materials[i].diffuse[1], materials[i].diffuse[2]);
+		m.emmision = color(materials[i].emission[0], materials[i].emission[1], materials[i].emission[2]);
+
+		mats.push_back(m);
+	}
+
 	printf("Loaded .obj file. Loading models into RAM.\n");
 	for (int i = 0; i < shapes.size(); ++i)
 	{
-		size_t indexBufferOffset = verts.size();
-		size_t matsOffset = mats.size();
+		int32_t indexBufferOffset = (int32_t)verts.size();
 
 		// vertex buffer
 		for (int v = 0; v < shapes[i].mesh.positions.size() / 3; ++v)
@@ -151,7 +177,7 @@ void loadOBJ(string filename, vec3 origin, float scale, bool flipNormals = false
 		for (int v = 0; v < shapes[i].mesh.indices.size() / 3; ++v)
 		{
 			tris.push_back(triangle());
-			size_t ind = tris.size() - 1;
+			uint32_t ind = (uint32_t)tris.size() - 1;
 			tris[ind].v0 = shapes[i].mesh.indices[3 * v + 0] + indexBufferOffset;
 			tris[ind].v1 = shapes[i].mesh.indices[3 * v + 1] + indexBufferOffset;
 			tris[ind].v2 = shapes[i].mesh.indices[3 * v + 2] + indexBufferOffset;
@@ -162,22 +188,21 @@ void loadOBJ(string filename, vec3 origin, float scale, bool flipNormals = false
 
 			tris[ind].mat = shapes[i].mesh.material_ids[0] + matsOffset;
 
+			if (mats[tris[ind].mat].emmision.r != 0)
+			{
+				lights.push_back(ind);
+				vec3 p1 = v1 - v0;
+				vec3 p2 = v2 - v0;
+				float area = length(cross(p1, p2)) / 2;
+				totalLightArea += area;
+				printf("got emmissive something: %f\n", area);
+			}
+
 			tris[ind].norm = normalized(cross(v1 - v0, v2 - v0));
 			if (flipNormals)
 				tris[ind].norm = tris[ind].norm * -1;
 			//printf("v0: %f, %f, %f\n", (double)tris[ind].norm.x, (double)tris[ind].norm.y, (double)tris[ind].norm.z);
 		}
-	}
-
-	printf("Loading materials\n");
-	for (int i = 0; i < materials.size(); ++i)
-	{
-		materialDesc m;
-
-		m.albedo = color(materials[i].diffuse[0], materials[i].diffuse[1], materials[i].diffuse[2]);
-		m.emmision = color(materials[i].emission[0], materials[i].emission[1], materials[i].emission[2]);
-
-		mats.push_back(m);
 	}
 
 	printf("%zd verts added \n", verts.size());

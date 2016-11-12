@@ -6,6 +6,7 @@
 #include <queue>
 
 #include "modelLoader.h"
+#include "ivec3.h"
 #include "vec3.h"
 
 struct AABB
@@ -124,7 +125,7 @@ struct BVH_node
 	BVH_node *left, *right;
 	int numChildNodes;
 
-	int target;
+	int32_t target;
 	int depth;
 
 	BVH_node()
@@ -146,7 +147,7 @@ struct BVH_node
 struct BVH_array_node
 {
 	AABB box;
-	int32_t left, right;
+	uint32_t left, right;
 };
 struct BVH_array
 {
@@ -250,11 +251,13 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	int bestLeftCount = 0;
 	int bestRightCount = 0;
 
+	/// TODO: make leftHi and rightLo into ivec3's
+
 	for (int axis = 0; axis < 3; ++axis)
 	{
 		for (int slice = 0; slice < gridDim; ++slice)
 		{
-			vec3 leftHi = vec3(gridDim, gridDim, gridDim);
+			ivec3 leftHi = ivec3(gridDim, gridDim, gridDim);
 			leftHi[axis] = slice;
 
 			AABB left;
@@ -275,7 +278,7 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 				}
 			}
 
-			vec3 rightLo = vec3(0, 0, 0);
+			ivec3 rightLo = ivec3(0, 0, 0);
 			rightLo[axis] = slice;
 
 			AABB right;
@@ -378,12 +381,17 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	return ret;
 }
 
-BVH_array BVHTreeToArray(BVH_node* root)
+BVH_array BVHTreeToArray(BVH_node* root, uint32_t numTris)
 {
 	std::queue<BVH_node*> line;
 	line.push(root);
 
-	int32_t arraySize = (root->numChildNodes + 1) / 2;
+	uint32_t arraySize = root->numChildNodes + 1 - numTris;
+	if (arraySize > MAX_BVH_INDEX)
+	{
+		printf("ERROR: too many elements in BVH]\n");
+		exit(0);
+	}
 	//int arraySize = (root->numChildNodes + 1);
 
 	BVH_array ret;
@@ -391,7 +399,7 @@ BVH_array BVHTreeToArray(BVH_node* root)
 	ret.size = arraySize;
 	ret.depth = root->depth;
 
-	int32_t counter = 0;
+	uint32_t counter = 0;
 
 	while (!line.empty())
 	{
@@ -402,20 +410,20 @@ BVH_array BVHTreeToArray(BVH_node* root)
 			if (cur->left->target == -1)
 			{
 				line.push(cur->left);
-				ret.root[counter].left = counter + line.size();
+				ret.root[counter].left = counter + (uint32_t)line.size();
 			}
 			else
-				ret.root[counter].left = -cur->left->target - 1;
+				ret.root[counter].left = cur->left->target | BVH_LEAF_FLAG;
 		}
 		if (cur->right != 0)
 		{
 			if (cur->right->target == -1)
 			{
 				line.push(cur->right);
-				ret.root[counter].right = counter + line.size();
+				ret.root[counter].right = counter + (uint32_t)line.size();
 			}
 			else
-				ret.root[counter].right = -cur->right->target - 1;
+				ret.root[counter].right = cur->right->target | BVH_LEAF_FLAG;
 		}
 
 		ret.root[counter].box = cur->box;
@@ -451,7 +459,7 @@ BVH_array buildBVH()
 	printf("Building the BVH\n");
 	BVH_node* root = buildBVHRecurse(allNodes, workingList, tris.size());
 
-	BVH_array ret = BVHTreeToArray(root);
+	BVH_array ret = BVHTreeToArray(root, tris.size());
 
 	/*delete root;
 	delete[] allNodes;
