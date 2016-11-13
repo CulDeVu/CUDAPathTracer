@@ -22,7 +22,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 100
+#define NUM_SAMPLES 10
 
 #define MAX_BVH_DEPTH 64
 
@@ -41,30 +41,6 @@ void checkError()
 		printf("error! ID: %d, \"%s\"\n", err, cudaGetErrorString(err));
 }
 
-__device__ ray getCameraRay(int idx)
-{
-	float y = (int)(idx / IMAGE_WIDTH) - IMAGE_HEIGHT / 2;
-	float x = idx % IMAGE_WIDTH - IMAGE_WIDTH / 2;
-
-	ray ret;
-	ret.o = vec3(0, 1.f, 5);
-	ret.dir = normalized(vec3(x / 2 / IMAGE_WIDTH, y / 2 / IMAGE_HEIGHT, -0.5));
-	return ret;
-}
-__device__ ray randCameraRay(camera* cam, vec3 posRelFilm, curandState* crs)
-{
-	float r = cam->radius * sqrt(curand_uniform(crs));
-	float theta = 2 * 3.14159 * curand_uniform(crs);
-	vec3 o = vec3(r * cos(theta), r * sin(theta), 0);
-
-	posRelFilm.z = cam->distFromFilm;
-	posRelFilm = posRelFilm * -cam->focalLength / cam->distFromFilm;
-	ray ret;
-	ret.o = o + cam->pos;
-	ret.dir = normalized(posRelFilm - o);
-
-	return ret;
-}
 __device__ vec3 getTangent(vec3 norm)
 {
 	vec3 tangent;
@@ -99,19 +75,10 @@ __device__ vec3 randRay(vec3 norm, curandState* crs)
 
 	return castRay;
 }
-__device__ vec3 cosineWeightedRay(vec3 norm, curandState* crs) {
+__device__ vec3 cosineWeightedRay(vec3 norm, curandState* crs)
+{
 	float u1 = nrand(crs),
 		u2 = nrand(crs);
-
-	/*float r_sqr = 1.0 - u1 * u1;
-	if (r_sqr < 0.0)
-		r_sqr = 0.0;
-	float r = sqrt(r_sqr);
-	float theta = 2.0 * 3.14159 * u2;
-
-	float x = r * cos(theta);
-	float z = r * sin(theta);
-	float y = u1;*/
 
 	float r = sqrt(u1);
 	float theta = 2 * 3.14159 * u2;
@@ -134,57 +101,6 @@ __device__ vec3 cosineWeightedRay(vec3 norm, curandState* crs) {
 __device__ color BRDF(materialDesc m, vec3 vDir, vec3 lDir)
 {
 	return mul(m.albedo, 1 / 3.14159);
-}
-
-__device__ bool drawBVH(pathState* pathState, sceneDesc scene, BVH_array bvh, int* workingList, curandState* crs)
-{
-	// intersection routine
-	workingList[0] = 0;
-
-	float max = 0;
-	for (int i = 0; 0 <= i; )
-	{
-		float t;
-		BVH_array_node* cur = &bvh.root[workingList[i]];
-
-		if (workingList[i] < 0)
-		{
-			--i;
-		}
-		else
-		{
-			//BVH_array_node* cur = &bvh.root[workingList[i]];
-
-			t = rayAABBIntersect(pathState->vDir.o, pathState->vDir.dir, cur->box);
-			if (t < MAX_FLOAT - 1)
-			{
-				workingList[i] = cur->right;
-				workingList[i + 1] = cur->left;
-				++i;
-
-				max += 1;
-			}
-			else
-			{
-				--i;
-			}
-		}
-	}
-
-	float H = 300 * (1 - max/bvh.depth) / 60;
-	float X = 1 - abs(fmod(H, 2.0f) - 1);
-	color c;
-	if (H <= 1)
-		c = color(1, X, 0);
-	else if (H <= 2)
-		c = color(X, 1, 0);
-	else if (H <= 3)
-		c = color(0, 1, X);
-	else
-		c = color(0, 0, 0);
-
-	pathState->weight = c;
-	return true;
 }
 
 struct triIntersection
@@ -240,69 +156,6 @@ __device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh)
 	ret.t = closestT;
 	return ret;
 }
-
-/*__device__ triIntersection trace_shared(ray r, sceneDesc scene, BVH_array bvh)
-{
-	__shared__ int stack[MAX_BVH_DEPTH];
-	__shared__ int i;
-	i = 1;
-
-	// i add the two children of the root so i can use 0 as the number for "nothing after this"
-	stack[0] = 2;
-	stack[1] = 1;
-	stack[2] = 0;
-
-	float closestT = MAX_FLOAT;
-	int trisID = -1;
-
-	while (i >= 0)
-	{
-		if (stack[i] < 0)
-		{
-			float t = triIntersect(r.o, r.dir, scene.verts, scene.tris + (-stack[i] - 1));
-			if (0 < t && t < closestT)
-			{
-				closestT = t;
-				trisID = -stack[i] - 1;
-			}
-		}
-		else
-		{
-			BVH_array_node* cur = &bvh.root[stack[i]];
-
-			float t = rayAABBIntersect(r.o, r.dir, cur->box);
-			if (t < MAX_FLOAT - 1)
-			{
-				stack[i + 1] = cur->left;
-				stack[i + 2] = 0;
-			}
-		}
-
-		__syncthreads();
-
-		if (threadIdx.x == 0)
-		{
-			if (stack[i + 1] != 0) // one of the rays intersected the current bvh and added it to the stack
-			{
-				// fill out the rest of the info
-				stack[i] = bvh.root[stack[i]].right;
-				i += 1;
-			}
-			else // nothing intersected the current bvh
-			{
-				stack[i] = 0;
-				i -= 1;
-			}
-		}
-
-		__syncthreads();
-	}
-
-	triIntersection ret;
-	ret.triIndex = trisID;
-	ret.t = closestT;
-	return ret;
-}*/
 
 __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, BVH_array bvh, curandState* crs)
 {

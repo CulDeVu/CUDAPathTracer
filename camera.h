@@ -8,6 +8,21 @@ struct ray
 	vec3 dir;
 };
 
+// rotate/flip a quadrant appropriately for hilbert
+void rot(int n, int *x, int *y, int rx, int ry) {
+    if (ry == 0) {
+        if (rx == 1) {
+            *x = n-1 - *x;
+            *y = n-1 - *y;
+        }
+
+        //Swap x and y
+        int t  = *x;
+        *x = *y;
+        *y = t;
+    }
+}
+
 struct camera
 {
 	vec3 pos;
@@ -30,8 +45,8 @@ struct camera
 	// scanline indexing
 	__host__ __device__ void scanlineItoPxl(uint16_t* x, uint16_t* y, uint32_t index)
 	{
-		*y = index / pxlWidth;
-		*x = index % pxlWidth;
+		*y = (uint16_t)(index / pxlWidth);
+		*x = (uint16_t)(index % pxlWidth);
 	}
 	__host__ __device__ int scanlinePxltoI(uint16_t x, uint16_t y)
 	{

@@ -392,7 +392,6 @@ BVH_array BVHTreeToArray(BVH_node* root, uint32_t numTris)
 		printf("ERROR: too many elements in BVH]\n");
 		exit(0);
 	}
-	//int arraySize = (root->numChildNodes + 1);
 
 	BVH_array ret;
 	ret.root = new BVH_array_node[arraySize];
@@ -459,7 +458,7 @@ BVH_array buildBVH()
 	printf("Building the BVH\n");
 	BVH_node* root = buildBVHRecurse(allNodes, workingList, tris.size());
 
-	BVH_array ret = BVHTreeToArray(root, tris.size());
+	BVH_array ret = BVHTreeToArray(root, (uint32_t)tris.size());
 
 	/*delete root;
 	delete[] allNodes;
