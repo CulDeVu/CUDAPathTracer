@@ -22,7 +22,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 10
+#define NUM_SAMPLES 100
 
 #define MAX_BVH_DEPTH 64
 
@@ -157,78 +157,10 @@ __device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh)
 	return ret;
 }
 
-__device__ triIntersection trace2(ray r, sceneDesc scene, BVH_array bvh)
-{
-	uint32_t stack[MAX_BVH_DEPTH];
-	stack[0] = 0;
-
-	uint32_t toIntersect[64];
-	int counter = 0;
-	__shared__ bool full;
-	full = false;
-
-	float closestT = MAX_FLOAT;
-	int trisID = -1;
-
-	int i = 0;
-	while (i >= 0)
-	{
-		if (stack[i] & BVH_LEAF_FLAG)
-		{
-			toIntersect[counter] = stack[i] ^ BVH_LEAF_FLAG;
-			++counter;
-
-			--i;
-		}
-		else
-		{
-			BVH_array_node* cur = &bvh.root[stack[i]];
-
-			float t = rayAABBIntersect(r.o, r.dir, cur->box);
-			if (t < MAX_FLOAT - 1)
-			{
-				stack[i] = cur->right;
-				stack[i + 1] = cur->left;
-				++i;
-
-				
-			}
-			else
-			{
-				--i;
-			}
-		}
-
-		if (counter == 64)
-			full = true;
-		__syncthreads();
-
-		if (full || i == -1)
-		{
-			for (int j = 0; j < counter; ++j)
-			{
-				float t = triIntersect(r.o, r.dir, scene.verts, scene.tris + toIntersect[j]);
-				if (0 < t && t < closestT)
-				{
-					closestT = t;
-					trisID = toIntersect[j];
-				}
-			}
-			counter = 0;
-		}
-
-		__syncthreads();
-		full = false;	
-	}
-
-	triIntersection ret;
-	ret.triIndex = trisID;
-	ret.t = closestT;
-	return ret;
-}
-
 __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, BVH_array bvh, curandState* crs)
 {
+	bool doneBouncing = false;
+
 	// intersection routine
 	triIntersection intersect = trace(pathState->vDir, scene, bvh);
 	int trisID = intersect.triIndex;
@@ -238,12 +170,12 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 	if (closestT < 0.001)
 	{
 		pathState->weight = color(0, 0, 0);
-		return true;
+		doneBouncing = true;
 	}
 	if (closestT > MAX_FLOAT - 1)
 	{
 		pathState->weight = mul(pathState->weight, color(0, 0, 0));
-		return true;
+		doneBouncing = true;
 	}
 
 	triangle curTris = scene.tris[trisID];
@@ -259,20 +191,17 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 	if (curMat.emmision.r != 0 && cosODir > 0)
 	{
 		pathState->weight = mul(pathState->weight, curMat.emmision);
-		return true;
+		doneBouncing = true;
 	}
 	else if (pathState->bounceNum == 0)
 	{
 		pathState->weight = color(0, 0, 0);
-		return true;
+		doneBouncing = true;
 	}
 
 	__shared__ int path;
-	if (threadIdx.x == 0)
-	{
-		float a = nrand(crs);
-		path = floor(a * 2);
-	}
+	float a = nrand(crs);
+	path = floor(a * 2);
 	__syncthreads();
 
 	/*int path;
@@ -339,7 +268,7 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 	pathState->vDir.dir = lDir;
 	pathState->bounceNum -= 1;
 	//pathState->bounceNum = 0;
-	return false;
+	return doneBouncing;
 }
 
 //-----------------------------------------------------------------------------
