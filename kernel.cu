@@ -22,7 +22,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 100
+#define NUM_SAMPLES 10
 
 #define MAX_BVH_DEPTH 64
 
@@ -267,14 +267,17 @@ __device__ bool radianceAlongSingleStep(pathState* pathState, sceneDesc scene, B
 		return true;
 	}
 
-	//__shared__ int path;
-	int path;
-	//if (threadIdx.x == 0)
+	__shared__ int path;
+	if (threadIdx.x == 0)
 	{
 		float a = nrand(crs);
 		path = floor(a * 2);
 	}
-	//__syncthreads();
+	__syncthreads();
+
+	/*int path;
+	float a = nrand(crs);
+	path = floor(a * 2);*/
 
 	// which sampling strat?
 	if (path == 0)
@@ -426,7 +429,9 @@ int main()
 	/*printf("---\n");
 	for (int i = 0; i < bvh.size; ++i)
 	{
-		printf("(%f,%f,%f), (%f,%f,%f), %d,%d\n", bvh.root[i].box.lo.x, bvh.root[i].box.lo.y, bvh.root[i].box.lo.z, bvh.root[i].box.hi.x, bvh.root[i].box.hi.y, bvh.root[i].box.hi.z, bvh.root[i].left, bvh.root[i].right);
+		printf("(%f,%f,%f), (%f,%f,%f), %d,%d\n", bvh.root[i].box.lo.x, bvh.root[i].box.lo.y, bvh.root[i].box.lo.z, 
+			bvh.root[i].box.hi.x, bvh.root[i].box.hi.y, bvh.root[i].box.hi.z, 
+			bvh.root[i].left & MAX_BVH_INDEX, bvh.root[i].right & MAX_BVH_INDEX);
 	}
 	printf("---\n");*/
 

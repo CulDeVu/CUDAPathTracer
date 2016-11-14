@@ -381,7 +381,8 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	return ret;
 }
 
-BVH_array BVHTreeToArray(BVH_node* root, uint32_t numTris)
+// breadth first bvh builder
+BVH_array BVHTreeToArrayBreadthFirst(BVH_node* root, uint32_t numTris)
 {
 	std::queue<BVH_node*> line;
 	line.push(root);
@@ -434,6 +435,65 @@ BVH_array BVHTreeToArray(BVH_node* root, uint32_t numTris)
 	return ret;
 }
 
+// depth first BVH builder
+void BVHTreeHelper(BVH_node* cur, BVH_array_node* arr, uint32_t* counter)
+{
+	uint32_t thisIndex = *counter;
+
+	arr[thisIndex].box = cur->box;
+
+	// 
+	*counter = *counter + 1;
+	if (cur->left->target == -1)
+	{
+		arr[thisIndex].left = *counter;
+		BVHTreeHelper(cur->left, arr, counter);
+	}
+	else
+	{
+		*counter -= 1;
+		arr[thisIndex].left = cur->left->target | BVH_LEAF_FLAG;
+	}
+
+	// 
+	*counter = *counter + 1;
+	if (cur->right->target == -1)
+	{
+		arr[thisIndex].right = *counter;
+		BVHTreeHelper(cur->right, arr, counter);
+	}
+	else
+	{
+		*counter -= 1;
+		arr[thisIndex].right = cur->right->target | BVH_LEAF_FLAG;
+	}
+}
+BVH_array BVHTreeToArrayDepthFirst(BVH_node* root, uint32_t numTris)
+{
+	std::vector<BVH_node*> line;
+	line.push_back(root);
+
+	uint32_t arraySize = root->numChildNodes + 1 - numTris;
+	if (arraySize > MAX_BVH_INDEX)
+	{
+		printf("ERROR: too many elements in BVH]\n");
+		exit(0);
+	}
+
+	BVH_array ret;
+	ret.root = new BVH_array_node[arraySize];
+	ret.size = arraySize;
+	ret.depth = root->depth;
+
+	uint32_t counter = 0;
+
+	BVHTreeHelper(root, ret.root, &counter);
+
+	printf("array size: %d\n", root->numChildNodes + 1);
+	printf("actual array size: %d\n", counter);
+	return ret;
+}
+
 BVH_array buildBVH()
 {
 	printf("Adding triangles to BVH\n");
@@ -458,7 +518,7 @@ BVH_array buildBVH()
 	printf("Building the BVH\n");
 	BVH_node* root = buildBVHRecurse(allNodes, workingList, tris.size());
 
-	BVH_array ret = BVHTreeToArray(root, (uint32_t)tris.size());
+	BVH_array ret = BVHTreeToArrayBreadthFirst(root, (uint32_t)tris.size());
 
 	/*delete root;
 	delete[] allNodes;
