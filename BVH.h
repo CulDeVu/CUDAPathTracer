@@ -6,14 +6,15 @@
 #include <queue>
 
 #include "modelLoader.h"
+#include "AABBvec3.h"
 #include "ivec3.h"
 #include "vec3.h"
 
 struct AABB
 {
-	vec3 lo, hi;
+	AABBvec3 lo, hi;
 
-	AABB()
+	__host__ AABB()
 		: lo(vec3()), hi(vec3())
 	{ }
 
@@ -25,7 +26,7 @@ struct AABB
 
 	float weight()
 	{
-		vec3 diff = hi - lo;
+		vec3 diff = (hi - lo).toVec3();
 		return 2 * (diff.x * diff.y + diff.x * diff.z + diff.y * diff.z);
 	}
 };
@@ -38,7 +39,7 @@ float BVHweight(AABB b1, AABB b2)
 {
 	AABB u;
 	AABBUnion(&u, &b1, &b2);
-	vec3 diff = u.hi - u.lo;
+	vec3 diff = (u.hi - u.lo).toVec3();
 	return 2 * (diff.x * diff.y + diff.x * diff.z + diff.y * diff.z);
 }
 __device__ void swap(float& a, float& b)
@@ -47,7 +48,7 @@ __device__ void swap(float& a, float& b)
 	a = b;
 	b = c;
 }
-__device__ float rayAABBIntersect(vec3 o, vec3 ray, AABB b)
+__device__ bool rayAABBIntersect(vec3 o, vec3 ray, AABB b)
 {
 	/*float tmin = -MAX_FLOAT;
 	float tmax = MAX_FLOAT;
@@ -95,7 +96,7 @@ __device__ float rayAABBIntersect(vec3 o, vec3 ray, AABB b)
 	if (tymin > tymax) swap(tymin, tymax);
 	
 	if ((tmin > tymax) || (tymin > tmax))
-		return MAX_FLOAT;
+		return false;
 
 	if (tymin > tmin)
 		tmin = tymin;
@@ -108,14 +109,9 @@ __device__ float rayAABBIntersect(vec3 o, vec3 ray, AABB b)
 	if (tzmin > tzmax) swap(tzmin, tzmax);
 
 	if ((tmin > tzmax) || (tzmin > tmax))
-		return MAX_FLOAT;
+		return false;
 
-	if (tzmin > tmin)
-		tmin = tzmin;
-	if (tzmax < tmax)
-		tmax = tzmax;
-
-	return tmin;
+	return true;
 }
 
 struct BVH_node
@@ -217,10 +213,10 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	}
 
 	// fill in the grid
-	vec3 dimUnits = (total.hi - total.lo) / gridDim;
+	vec3 dimUnits = (total.hi - total.lo).toVec3() / gridDim;
 	for (int i = 0; i < numNodes; ++i)
 	{
-		vec3 center = ((nodes[workingList[i]].box.hi + nodes[workingList[i]].box.lo) / 2 - total.lo);
+		vec3 center = ((nodes[workingList[i]].box.hi + nodes[workingList[i]].box.lo) / 2 - total.lo).toVec3();
 		int cx = (int)min(gridDim - 1, max(0, (int)(center.x / dimUnits.x)));
 		int cy = (int)min(gridDim - 1, max(0, (int)(center.y / dimUnits.y)));
 		int cz = (int)min(gridDim - 1, max(0, (int)(center.z / dimUnits.z)));
@@ -348,7 +344,7 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 
 	for (int i = 0; i < numNodes; ++i)
 	{
-		vec3 center = ((nodes[workingList[i]].box.hi + nodes[workingList[i]].box.lo) / 2 - total.lo);
+		vec3 center = ((nodes[workingList[i]].box.hi + nodes[workingList[i]].box.lo) / 2 - total.lo).toVec3();
 		center.x = min(gridDim - 1, max(0, (int)(center.x / dimUnits.x)));
 		center.y = min(gridDim - 1, max(0, (int)(center.y / dimUnits.y)));
 		center.z = min(gridDim - 1, max(0, (int)(center.z / dimUnits.z)));
