@@ -22,18 +22,9 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 100
+#define NUM_SAMPLES 1000
 
 #define MAX_BVH_DEPTH 64
-
-struct pathState
-{
-	ray vDir;
-	color weight;
-	color accumulation;
-	int bounceNum;
-	int sampleNum;
-};
 
 void checkError()
 {
@@ -156,71 +147,7 @@ __device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh)
 	return ret;
 }
 
-/*__device__ triIntersection trace_warp(ray r, sceneDesc scene, BVH_array bvh)
-{
-	//int numWarps = blockDim.x / 32;
-	const int numWarps = 512 / 32;
-	int warpInd = threadIdx.x / 32;
-	int stackInd = MAX_BVH_DEPTH * warpInd;
-
-	__shared__ uint32_t stack[MAX_BVH_DEPTH * numWarps];
-	__shared__ int i[numWarps];
-	i[warpInd] = 1;
-	// i add the two children of the root so i can use 0 as the number for "nothing after this"
-	stack[stackInd + 0] = 2;
-	stack[stackInd + 1] = 1;
-	stack[stackInd + 2] = 0;
-	float closestT = MAX_FLOAT;
-	int trisID = -1;
-	while (i[warpInd] >= 0)
-	{
-		int iCur = i[warpInd];
-
-		if (stack[stackInd + iCur] & BVH_LEAF_FLAG)
-		{
-			float t = triIntersect(r.o, r.dir, scene.verts, scene.tris + (stack[stackInd + iCur] ^ BVH_LEAF_FLAG));
-			if (0 < t && t < closestT)
-			{
-				closestT = t;
-				trisID = stack[stackInd + iCur] ^ BVH_LEAF_FLAG;
-			}
-		}
-		else
-		{
-			BVH_array_node* cur = &bvh.root[stack[stackInd + iCur]];
-			float t = rayAABBIntersect(r.o, r.dir, cur->box);
-			if (t < MAX_FLOAT - 1)
-			{
-				stack[stackInd + iCur + 1] = cur->left;
-				stack[stackInd + iCur + 2] = 0;
-			}
-		}
-		__syncthreads();
-
-		// 512 / 32 == 16 !!!!!!
-		if (threadIdx.x % 32 == 0)
-		{
-			if (stack[stackInd + iCur + 1] != 0) // one of the rays intersected the current bvh and added it to the stack
-			{
-				// fill out the rest of the info
-				stack[stackInd + iCur] = bvh.root[stack[stackInd + iCur]].right;
-				i[warpInd] += 1;
-			}
-			else // nothing intersected the current bvh
-			{
-				stack[stackInd + iCur] = 0;
-				i[warpInd] -= 1;
-			}
-		}
-		__syncthreads();
-	}
-	triIntersection ret;
-	ret.triIndex = trisID;
-	ret.t = closestT;
-	return ret;
-}*/
-
-__device__ bool radianceAlongSingleStep(pathState* pathStatePtr, sceneDesc scene, BVH_array bvh, curandState* crs)
+/*__device__ bool radianceAlongSingleStep(pathState* pathStatePtr, sceneDesc scene, BVH_array bvh, curandState* crs)
 {
 	bool doneBouncing = false;
 
@@ -270,7 +197,7 @@ __device__ bool radianceAlongSingleStep(pathState* pathStatePtr, sceneDesc scene
 
 	/*int path;
 	float a = nrand(crs);
-	path = floor(a * 2);*/
+	path = floor(a * 2);*
 
 	// which sampling strat?
 	if (path == 0)
@@ -333,124 +260,58 @@ __device__ bool radianceAlongSingleStep(pathState* pathStatePtr, sceneDesc scene
 	pathStatePtr->bounceNum -= 1;
 	//pathState->bounceNum = 0;
 	return doneBouncing;
-}
+}*/
 
-__device__ color radianceAlongSingleStep2(ray r, sceneDesc scene, BVH_array bvh, curandState* crs)
+__device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array bvh, curandState* crs)
 {
 	color accum = color(0, 0, 0);
 	color weight = color(1, 1, 1);
 
 	for (int i = 0; i < 3; ++i)
 	{
-	}
+		// intersection routine
+		triIntersection intersect = trace(vDir, scene, bvh);
+		int trisID = intersect.triIndex;
+		float closestT = intersect.t;
 
-	// intersection routine
-	triIntersection intersect = trace(pathStatePtr->vDir, scene, bvh);
-	int trisID = intersect.triIndex;
-	float closestT = intersect.t;
+		closestT -= 0.001;
+		if (closestT < 0.001)
+		{
+			weight = color(0, 0, 0);
+		}
+		if (closestT > MAX_FLOAT - 1)
+		{
+			accum = mul(weight, color(0, 0, 0));
+			weight = color(0, 0, 0);
+			trisID = 0;
+			closestT = 0;
+		}
 
-	closestT -= 0.001;
-	if (closestT < 0.001)
-	{
-		pathStatePtr->weight = color(0, 0, 0);
-		doneBouncing = true;
-	}
-	if (closestT > MAX_FLOAT - 1)
-	{
-		pathStatePtr->accumulation = mul(pathStatePtr->weight, color(0, 0, 0));
-		doneBouncing = true;
-	}
+		triangle curTris = scene.tris[trisID];
+		materialDesc curMat = scene.mats[curTris.mat];
+		vec3 normal = scene.tris[trisID].norm;
 
-	triangle curTris = scene.tris[trisID];
-	materialDesc curMat = scene.mats[curTris.mat];
-	vec3 normal = scene.tris[trisID].norm;
+		vec3 oDir = vDir.dir * -1;
+		vec3 lDir;
+		vec3 pos = vDir.o + vDir.dir * closestT;
 
-	vec3 oDir = pathStatePtr->vDir.dir * -1;
-	vec3 lDir;
-	vec3 pos = pathStatePtr->vDir.o + pathStatePtr->vDir.dir * closestT;
+		float cosODir = dot(oDir, normal);
 
-	float cosODir = dot(oDir, normal);
+		if (curMat.emmision.r != 0 && cosODir > 0)
+		{
+			accum = add(accum, mul(weight, curMat.emmision));
+			weight = color(0, 0, 0);
+		}
 
-	if (curMat.emmision.r != 0 && cosODir > 0)
-	{
-		pathStatePtr->accumulation = mul(pathStatePtr->weight, curMat.emmision);
-		pathStatePtr->weight = color(0, 0, 0);
-		doneBouncing = true;
-	}
-	else if (pathStatePtr->bounceNum == 0)
-	{
-		pathStatePtr->weight = color(0, 0, 0);
-		doneBouncing = true;
-	}
-
-	__shared__ int path;
-	float a = nrand(crs);
-	path = floor(a * 2);
-	__syncthreads();
-
-	/*int path;
-	float a = nrand(crs);
-	path = floor(a * 2);*/
-
-	// which sampling strat?
-	if (path == 0)
-	{
 		lDir = cosineWeightedRay(normal, crs);
-		color curWeight = curMat.albedo;
-		pathStatePtr->weight = mul(pathStatePtr->weight, curWeight);
-	}
-	else
-	{
-		float randArea = scene.totalLightArea * nrand(crs);
-		int selectedTri = 0;
-		for (int i = 0; i < scene.numLights; ++i)
-		{
-			vec3 v0 = scene.verts[scene.tris[scene.lights[i]].v0];
-			vec3 v1 = scene.verts[scene.tris[scene.lights[i]].v1];
-			vec3 v2 = scene.verts[scene.tris[scene.lights[i]].v2];
+		color curWeight = BRDF(curMat, oDir, lDir) * 3.14159;
+		weight = mul(weight, curWeight);
 
-			vec3 a1 = v1 - v0;
-			vec3 a2 = v2 - v0;
-			float area = length(cross(a1, a2)) / 2;
-
-			if (randArea < area && randArea > 0)
-				selectedTri = scene.lights[i];
-
-			randArea -= area;
-		}
-
-		float u = nrand(crs);
-		float v = nrand(crs);
-
-		vec3 v0 = scene.verts[scene.tris[selectedTri].v0];
-		vec3 v1 = scene.verts[scene.tris[selectedTri].v1];
-		vec3 v2 = scene.verts[scene.tris[selectedTri].v2];
-		vec3 a1 = v1 - v0;
-		vec3 a2 = v2 - v0;
-
-		if (u + v > 1.0)
-		{
-			u += 2 * (0.5 - u);
-			v += 2 * (0.5 - v);
-		}
-
-		vec3 pos1 = v0 + a1 * u + a2 * v;
-		vec3 d = pos1 - pos;
-
-		lDir = normalized(d);
-
-		float invProb = scene.totalLightArea;
-		float cosLDir = max(0.0f, dot(lDir, normal));
-		float cosO1Dir = max(0.0f, dot(vec3(0, -1, 0), lDir * -1));
-
-		float G = cosLDir * cosO1Dir / dot(d, d);
-		pathStatePtr->weight = mul(pathStatePtr->weight, BRDF(curMat, oDir, lDir) * G * invProb);
-		pathStatePtr->bounceNum = 1;
+		vDir.o = pos;
+		vDir.dir = lDir;
 	}
 
-	/*pathStatePtr->vDir.o = pos;
-	pathStatePtr->vDir.dir = lDir;
-	pathStatePtr->bounceNum -= 1;*/
+	return accum;
 }
 
 //-----------------------------------------------------------------------------
@@ -463,21 +324,6 @@ __global__ void setupImgBuffer(color* imgBuff)
 		return;
 	imgBuff[idx] = color(0, 0, 0);
 }
-__global__ void setupPathStateBuffer(pathState* pathStateBuffer, camera* cam, curandState* randState)
-{
-	int idx = blockIdx.x*blockDim.x + threadIdx.x;
-	if (idx >= IMAGE_SIZE)
-		return;
-
-	//float x, y;
-	//scanlineItoFilm(&x, &y, idx, IMAGE_WIDTH, IMAGE_HEIGHT);
-
-	pathStateBuffer[idx].vDir = cam->cameraRay(idx, nrand(randState), nrand(randState)); // randCameraRay(cam, vec3(x, y, 0), &randState[idx]);;
-	pathStateBuffer[idx].weight = color(1, 1, 1);
-	pathStateBuffer[idx].accumulation = color(0, 0, 0);
-	pathStateBuffer[idx].bounceNum = 3;
-	pathStateBuffer[idx].sampleNum = 1;
-}
 __global__ void setupCurand(curandState *state)
 {
 	int idx = blockIdx.x*blockDim.x + threadIdx.x;
@@ -488,38 +334,22 @@ __global__ void setupCurand(curandState *state)
 
 __global__ void drawPixel(
 	color* imgBuff,
-	pathState* pathStateBuffer,
 	sceneDesc scene,
 	camera* cam,
 	BVH_array bvh,
+	int curSampleNum,
 	curandState* randState)
 {
 	int idx = blockIdx.x*blockDim.x + threadIdx.x;
 	if (idx >= IMAGE_SIZE)
 		return;
 
-	bool result = radianceAlongSingleStep(&pathStateBuffer[idx], scene, bvh, &randState[idx]);
-	//bool result = drawBVH(&pathStateBuffer[idx], scene, bvh, bvh_stack + bvhIndex, &randState[idx]);
-	if (result)
-	{
-		int curSampleNum = pathStateBuffer[idx].sampleNum;
-		color prevSum = imgBuff[idx];
-		imgBuff[idx] = add(mul(prevSum, (float)(curSampleNum - 1) / curSampleNum), mul(pathStateBuffer[idx].accumulation, 1.0f / curSampleNum));
+	ray r = cam->cameraRay(idx, nrand(randState), nrand(randState));
 
-		//float x, y;
-		{
-			//int ix, iy;
-			//mortonItoPxl(&ix, &iy, idx, IMAGE_WIDTH, IMAGE_HEIGHT);
-			//pxlToFilm(&x, &y, ix, iy, IMAGE_WIDTH, IMAGE_HEIGHT);
-			//scanlineItoFilm(&x, &y, idx, IMAGE_WIDTH, IMAGE_HEIGHT);
-		}
+	color result = radianceAlongSingleStep2(r, scene, bvh, &randState[idx]);
 
-		pathStateBuffer[idx].vDir = cam->cameraRay(idx, nrand(randState), nrand(randState)); // randCameraRay(cam, vec3(x, y, 0), &randState[idx]);
-		pathStateBuffer[idx].weight = color(1, 1, 1);
-		pathStateBuffer[idx].accumulation = color(0, 0, 0);
-		pathStateBuffer[idx].bounceNum = 3;
-		pathStateBuffer[idx].sampleNum += 1;
-	}
+	color prevSum = imgBuff[idx];
+	imgBuff[idx] = add(mul(prevSum, (float)(curSampleNum - 1) / curSampleNum), mul(result, 1.0f / curSampleNum));
 }
 
 int main()
@@ -603,11 +433,6 @@ int main()
 	cudaMalloc((void**)&imgBuffer_device, IMAGE_SIZE * sizeof(color));
 	setupImgBuffer <<< nblocks, nThreads >>>(imgBuffer_device);
 
-	// setup path state buffer
-	pathState* pathStateBuffer_device;
-	cudaMalloc((void**)&pathStateBuffer_device, IMAGE_SIZE * sizeof(pathState));
-	setupPathStateBuffer <<< nblocks, nThreads >>>(pathStateBuffer_device, cam_device, randState_device);
-
 	// vertex buffer
 	sceneDesc scene_device;
 	cudaMalloc((void**)&scene_device.verts, verts.size() * sizeof(vec3));
@@ -653,7 +478,7 @@ int main()
 		{
 			auto start = std::chrono::steady_clock::now();
 
-			drawPixel <<< nblocks, nThreads >>>(imgBuffer_device, pathStateBuffer_device, scene_device, cam_device, bvh_device, randState_device);
+			drawPixel <<< nblocks, nThreads >>>(imgBuffer_device, scene_device, cam_device, bvh_device, sampleNum, randState_device);
 
 			if (sampleNum % 10 == 0)
 				printf("sample %d finished\n", sampleNum);
