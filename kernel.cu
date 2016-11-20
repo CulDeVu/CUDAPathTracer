@@ -22,7 +22,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 1000
+#define NUM_SAMPLES 100
 
 #define MAX_BVH_DEPTH 64
 
@@ -138,6 +138,60 @@ __device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh)
 			{
 				--i;
 			}
+		}
+	}
+
+	triIntersection ret;
+	ret.triIndex = trisID;
+	ret.t = closestT;
+	return ret;
+}
+
+__device__ triIntersection trace_shared(ray r, sceneDesc scene, BVH_array bvh)
+{
+	uint32_t warpID = MAX_BVH_DEPTH * (threadIdx.x / 32);
+	__shared__ uint32_t stack[MAX_BVH_DEPTH * 16];
+	stack[warpID + 0] = 2;
+	stack[warpID + 1] = 1;
+	stack[warpID + 2] = 0;
+
+	float closestT = MAX_FLOAT;
+	int trisID = -1;
+
+	int i = 1;
+	while (i >= 0)
+	{
+		if (stack[warpID + i] & BVH_LEAF_FLAG)
+		{
+			float t = triIntersect(r.o, r.dir, scene.verts, scene.tris + (stack[warpID + i] ^ BVH_LEAF_FLAG));
+			if (0 < t && t < closestT)
+			{
+				closestT = t;
+				trisID = stack[warpID + i] ^ BVH_LEAF_FLAG;
+			}
+		}
+		else
+		{
+			BVH_array_node* cur = &bvh.root[stack[warpID + i]];
+
+			bool b = rayAABBIntersect(r.o, r.dir, cur->box);
+			if (b)
+			{
+				stack[warpID + i + 1] = cur->left;
+				stack[warpID + i + 2] = 0;
+			}
+		}
+
+		__syncthreads();
+		if (stack[warpID + i + 1] != 0)
+		{
+			stack[warpID + i] = bvh.root[stack[warpID + i]].right;
+			++i;
+		}
+		else
+		{
+			stack[warpID + i] = 0;
+			--i;
 		}
 	}
 
@@ -270,7 +324,7 @@ __device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array b
 	for (int i = 0; i < 3; ++i)
 	{
 		// intersection routine
-		triIntersection intersect = trace(vDir, scene, bvh);
+		triIntersection intersect = trace_shared(vDir, scene, bvh);
 		int trisID = intersect.triIndex;
 		float closestT = intersect.t;
 
@@ -281,7 +335,7 @@ __device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array b
 		}
 		if (closestT > MAX_FLOAT - 1)
 		{
-			accum = mul(weight, color(0, 0, 0));
+			accum = add(accum, mul(weight, color(0, 0, 0)));
 			weight = color(0, 0, 0);
 			trisID = 0;
 			closestT = 0;
@@ -396,6 +450,20 @@ int main()
 	}
 	printf("---\n");*/
 
+	// output DOT file
+	/*for (int i = 0; i < bvh.size; ++i)
+	{
+		if (bvh.root[i].left & BVH_LEAF_FLAG)
+			printf("\t%d -- -%zd\n", i, bvh.root[i].left ^ BVH_LEAF_FLAG);
+		else
+			printf("\t%d -- %d\n", i, bvh.root[i].left);
+		
+		if (bvh.root[i].right & BVH_LEAF_FLAG)
+			printf("\t%d -- -%zd\n", i, bvh.root[i].right ^ BVH_LEAF_FLAG);
+		else
+			printf("\t%d -- %d\n", i, bvh.root[i].right);
+	}*/
+
 	if (bvh.depth >= MAX_BVH_DEPTH)
 	{
 		printf("Critical Error: BVH depth is too big\n");
@@ -474,7 +542,7 @@ int main()
 	cudaEventRecord(start, 0);
 	{
 		int sampleNum = 1;
-		while (sampleNum < NUM_SAMPLES)
+		while (sampleNum <= NUM_SAMPLES)
 		{
 			auto start = std::chrono::steady_clock::now();
 
