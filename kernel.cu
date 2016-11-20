@@ -324,7 +324,7 @@ __device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array b
 	for (int i = 0; i < 3; ++i)
 	{
 		// intersection routine
-		triIntersection intersect = trace_shared(vDir, scene, bvh);
+		triIntersection intersect = trace(vDir, scene, bvh);
 		int trisID = intersect.triIndex;
 		float closestT = intersect.t;
 
@@ -335,7 +335,6 @@ __device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array b
 		}
 		if (closestT > MAX_FLOAT - 1)
 		{
-			accum = add(accum, mul(weight, color(0, 0, 0)));
 			weight = color(0, 0, 0);
 			trisID = 0;
 			closestT = 0;
@@ -349,11 +348,11 @@ __device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array b
 		vec3 lDir;
 		vec3 pos = vDir.o + vDir.dir * closestT;
 
-		float cosODir = dot(oDir, normal);
+		float cosODir = abs(dot(oDir, normal));
 
-		if (curMat.emmision.r != 0 && cosODir > 0)
+		if (curMat.emmision.r != 0)
 		{
-			accum = add(accum, mul(weight, curMat.emmision));
+			accum = mul(weight, curMat.emmision);
 			weight = color(0, 0, 0);
 		}
 
