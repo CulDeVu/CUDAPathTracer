@@ -22,7 +22,8 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 100
+#define NUM_SAMPLES 10
+#define NUM_BOUNCES 3
 
 #define MAX_BVH_DEPTH 64
 
@@ -201,127 +202,12 @@ __device__ triIntersection trace_shared(ray r, sceneDesc scene, BVH_array bvh)
 	return ret;
 }
 
-/*__device__ bool radianceAlongSingleStep(pathState* pathStatePtr, sceneDesc scene, BVH_array bvh, curandState* crs)
-{
-	bool doneBouncing = false;
-
-	// intersection routine
-	triIntersection intersect = trace(pathStatePtr->vDir, scene, bvh);
-	int trisID = intersect.triIndex;
-	float closestT = intersect.t;
-
-	closestT -= 0.001;
-	if (closestT < 0.001)
-	{
-		pathStatePtr->weight = color(0, 0, 0);
-		doneBouncing = true;
-	}
-	if (closestT > MAX_FLOAT - 1)
-	{
-		pathStatePtr->accumulation = mul(pathStatePtr->weight, color(0, 0, 0));
-		doneBouncing = true;
-	}
-
-	triangle curTris = scene.tris[trisID];
-	materialDesc curMat = scene.mats[curTris.mat];
-	vec3 normal = scene.tris[trisID].norm;
-
-	vec3 oDir = pathStatePtr->vDir.dir * -1;
-	vec3 lDir;
-	vec3 pos = pathStatePtr->vDir.o + pathStatePtr->vDir.dir * closestT;
-
-	float cosODir = dot(oDir, normal);
-
-	if (curMat.emmision.r != 0 && cosODir > 0)
-	{
-		pathStatePtr->accumulation = mul(pathStatePtr->weight, curMat.emmision);
-		pathStatePtr->weight = color(0, 0, 0);
-		doneBouncing = true;
-	}
-	else if (pathStatePtr->bounceNum == 0)
-	{
-		pathStatePtr->weight = color(0, 0, 0);
-		doneBouncing = true;
-	}
-
-	__shared__ int path;
-	float a = nrand(crs);
-	path = floor(a * 2);
-	__syncthreads();
-
-	/*int path;
-	float a = nrand(crs);
-	path = floor(a * 2);*
-
-	// which sampling strat?
-	if (path == 0)
-	{
-		lDir = cosineWeightedRay(normal, crs);
-		color curWeight = curMat.albedo;
-		pathStatePtr->weight = mul(pathStatePtr->weight, curWeight);
-	}
-	else
-	{
-		float randArea = scene.totalLightArea * nrand(crs);
-		int selectedTri = 0;
-		for (int i = 0; i < scene.numLights; ++i)
-		{
-			vec3 v0 = scene.verts[scene.tris[scene.lights[i]].v0];
-			vec3 v1 = scene.verts[scene.tris[scene.lights[i]].v1];
-			vec3 v2 = scene.verts[scene.tris[scene.lights[i]].v2];
-
-			vec3 a1 = v1 - v0;
-			vec3 a2 = v2 - v0;
-			float area = length(cross(a1, a2)) / 2;
-
-			if (randArea < area && randArea > 0)
-				selectedTri = scene.lights[i];
-
-			randArea -= area;
-		}
-
-		float u = nrand(crs);
-		float v = nrand(crs);
-
-		vec3 v0 = scene.verts[scene.tris[selectedTri].v0];
-		vec3 v1 = scene.verts[scene.tris[selectedTri].v1];
-		vec3 v2 = scene.verts[scene.tris[selectedTri].v2];
-		vec3 a1 = v1 - v0;
-		vec3 a2 = v2 - v0;
-
-		if (u + v > 1.0)
-		{
-			u += 2 * (0.5 - u);
-			v += 2 * (0.5 - v);
-		}
-
-		vec3 pos1 = v0 + a1 * u + a2 * v;
-		vec3 d = pos1 - pos;
-
-		lDir = normalized(d);
-
-		float invProb = scene.totalLightArea;
-		float cosLDir = max(0.0f, dot(lDir, normal));
-		float cosO1Dir = max(0.0f, dot(vec3(0, -1, 0), lDir * -1));
-
-		float G = cosLDir * cosO1Dir / dot(d, d);
-		pathStatePtr->weight = mul(pathStatePtr->weight, BRDF(curMat, oDir, lDir) * G * invProb);
-		pathStatePtr->bounceNum = 1;
-	}
-
-	pathStatePtr->vDir.o = pos;
-	pathStatePtr->vDir.dir = lDir;
-	pathStatePtr->bounceNum -= 1;
-	//pathState->bounceNum = 0;
-	return doneBouncing;
-}*/
-
 __device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array bvh, curandState* crs)
 {
 	color accum = color(0, 0, 0);
 	color weight = color(1, 1, 1);
 
-	for (int i = 0; i < 3; ++i)
+	for (int i = 0; i < NUM_BOUNCES; ++i)
 	{
 		// intersection routine
 		triIntersection intersect = trace(vDir, scene, bvh);
@@ -352,13 +238,60 @@ __device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array b
 
 		if (curMat.emmision.r != 0)
 		{
-			accum = mul(weight, curMat.emmision);
+			accum = add(accum, mul(weight, curMat.emmision));
 			weight = color(0, 0, 0);
 		}
 
-		lDir = cosineWeightedRay(normal, crs);
-		color curWeight = BRDF(curMat, oDir, lDir) * 3.14159;
-		weight = mul(weight, curWeight);
+		float a = nrand(crs);
+		if (a < 0.5)
+		{
+			lDir = cosineWeightedRay(normal, crs);
+			color curWeight = BRDF(curMat, oDir, lDir) * 3.14159;
+			weight = mul(weight, curWeight);
+		}
+		else
+		{
+			float randArea = scene.totalLightArea * nrand(crs);
+			int selectedTri = 0;
+			for (int j = 0; j < scene.numLights; ++j)
+			{
+				vec3 v0 = scene.verts[scene.tris[scene.lights[j]].v0];
+				vec3 v1 = scene.verts[scene.tris[scene.lights[j]].v1];
+				vec3 v2 = scene.verts[scene.tris[scene.lights[j]].v2];
+				vec3 a1 = v1 - v0;
+				vec3 a2 = v2 - v0;
+				float area = length(cross(a1, a2)) / 2;
+				if (randArea < area && randArea > 0)
+					selectedTri = scene.lights[j];
+				randArea -= area;
+			}
+
+			float u = nrand(crs);
+			float v = nrand(crs);
+			vec3 v0 = scene.verts[scene.tris[selectedTri].v0];
+			vec3 v1 = scene.verts[scene.tris[selectedTri].v1];
+			vec3 v2 = scene.verts[scene.tris[selectedTri].v2];
+			vec3 a1 = v1 - v0;
+			vec3 a2 = v2 - v0;
+
+			if (u + v > 1.0)
+			{
+				u += 2 * (0.5 - u);
+				v += 2 * (0.5 - v);
+			}
+
+			vec3 pos1 = v0 + a1 * u + a2 * v;
+			vec3 d = pos1 - pos;
+			lDir = normalized(d);
+
+			float invProb = scene.totalLightArea;
+			float cosLDir = max(0.0f, dot(lDir, normal));
+			float cosO1Dir = max(0.0f, dot(vec3(0, -1, 0), lDir * -1));
+			float G = cosLDir * cosO1Dir / dot(d, d);
+
+			weight = mul(weight, BRDF(curMat, oDir, lDir) * G * invProb);
+			i = max(i, NUM_BOUNCES - 2);
+		}
 
 		vDir.o = pos;
 		vDir.dir = lDir;
@@ -417,6 +350,7 @@ int main()
 		printf("  Global: %zd\n", p.totalGlobalMem);
 		printf("  Shared (per block): %zd\n", p.sharedMemPerBlock);
 		printf("  Constant: %zd\n", p.totalConstMem);
+		printf("  Registers (per block): %d\n", p.regsPerBlock);
 	}
 	printf("Dimensions:\n");
 	{
@@ -426,8 +360,8 @@ int main()
 	printf("\n");
 
 	// load shit
-	//loadOBJ("models/sponza_light.obj", vec3(), 1);
-	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
+	loadOBJ("models/sponza_light.obj", vec3(), 1);
+	//loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
 	//loadOBJ("models/teapot.obj", vec3(0, 1, 0), 1);
 	//loadOBJ("models/dragon_simple.obj", vec3(0.3, 0.6, 0.5), 1);
 	//loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.5);
@@ -547,7 +481,7 @@ int main()
 
 			drawPixel <<< nblocks, nThreads >>>(imgBuffer_device, scene_device, cam_device, bvh_device, sampleNum, randState_device);
 
-			if (sampleNum % 10 == 0)
+			if ((sampleNum - 1) % 10 == 0)
 				printf("sample %d finished\n", sampleNum);
 			cudaDeviceSynchronize();
 
@@ -569,6 +503,7 @@ int main()
 	cudaEventElapsedTime(&milliseconds, start, stop);
 	printf("Render took %f ms (%f s)\n", milliseconds, milliseconds / 1000);
 	printf("%f ms per loop \n", milliseconds / NUM_SAMPLES);
+	printf("%f Mrays/s\n", IMAGE_SIZE * NUM_SAMPLES * (NUM_BOUNCES + 1) / (milliseconds * 1000));
 
 	// build imgBuffer_host
 	cudaMemcpy(imgBuffer_host, imgBuffer_device, IMAGE_SIZE * sizeof(color), cudaMemcpyDeviceToHost);

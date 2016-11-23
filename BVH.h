@@ -195,6 +195,7 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	{
 		AABBUnion(&total, &total, &(nodes[workingList[i]].box));
 	}
+	float totalWeight = total.weight();
 
 	// build the grid
 	const int gridDim = 8;
@@ -295,7 +296,12 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 				}
 			}
 
-			double score = countLeft * left.weight() + countRight * right.weight();
+			//double leftProb = 1 - pow(1 - left.weight() / totalWeight, 4);
+			//double rightProb = 1 - pow(1 - right.weight() / totalWeight, 4);
+			double leftProb = left.weight() / totalWeight;
+			double rightProb = right.weight() / totalWeight;
+			double score = countLeft * leftProb + countRight * rightProb;
+			//double score = countLeft + countRight;
 			//float score = left.weight() + right.weight();
 			if (score < bestScore)
 			{
@@ -310,7 +316,7 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 
 	// in certain cases, there will be no slice that cuts more optimally than not cutting them at all
 	// well too fucking bad we're doing it anyways
-	if (bestLeftCount == 0)
+	if (bestLeftCount == 0 || bestRightCount == 0)
 	{
 		int leftCount = bestRightCount / 2;
 		int rightCount = bestRightCount - leftCount;
