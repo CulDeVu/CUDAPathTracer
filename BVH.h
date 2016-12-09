@@ -50,50 +50,17 @@ __device__ void swap(float& a, float& b)
 }
 __device__ bool rayAABBIntersect(vec3 o, vec3 ray, AABB b)
 {
-	/*float tmin = -MAX_FLOAT;
-	float tmax = MAX_FLOAT;
-
-	if (ray.x != 0)
-	{
-		float tx1 = (b.lo.x - o.x) / ray.x;
-		float tx2 = (b.hi.x - o.x) / ray.x;
-
-		tmin = max(tmin, min(tx1, tx2));
-		tmax = min(tmax, max(tx1, tx2));
-	}
-
-	if (ray.y != 0)
-	{
-		float ty1 = (b.lo.y - o.y) / ray.y;
-		float ty2 = (b.hi.y - o.y) / ray.y;
-
-		tmin = max(tmin, min(ty1, ty2));
-		tmax = min(tmax, max(ty1, ty2));
-	}
-
-	if (ray.z != 0)
-	{
-		float tz1 = (b.lo.z - o.z) / ray.z;
-		float tz2 = (b.hi.z - o.z) / ray.z;
-
-		tmin = max(tmin, min(tz1, tz2));
-		tmax = min(tmax, max(tz1, tz2));
-	}
-
-	if (tmax <= tmin)
-		return MAX_FLOAT;
-
-	return tmin;*/
-
 	float tmin = (b.lo.x - o.x) / ray.x;
 	float tmax = (b.hi.x - o.x) / ray.x;
 
-	if (tmin > tmax) swap(tmin, tmax);
+	if (tmin > tmax) 
+		swap(tmin, tmax);
 
 	float tymin = (b.lo.y - o.y) / ray.y;
 	float tymax = (b.hi.y - o.y) / ray.y;
 
-	if (tymin > tymax) swap(tymin, tymax);
+	if (tymin > tymax)
+		swap(tymin, tymax);
 	
 	if ((tmin > tymax) || (tymin > tmax))
 		return false;
@@ -106,7 +73,8 @@ __device__ bool rayAABBIntersect(vec3 o, vec3 ray, AABB b)
 	float tzmin = (b.lo.z - o.z) / ray.z;
 	float tzmax = (b.hi.z - o.z) / ray.z;
 
-	if (tzmin > tzmax) swap(tzmin, tzmax);
+	if (tzmin > tzmax)
+		swap(tzmin, tzmax);
 
 	if ((tmin > tzmax) || (tzmin > tmax))
 		return false;
@@ -182,9 +150,6 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	}
 	if (numNodes == 1)
 	{
-		/*BVH_node* ret = createEmptyBVH_node();
-		ret->left = &nodes[workingList[0]];
-		return ret;*/
 		return &nodes[workingList[0]];
 	}
 
@@ -198,7 +163,7 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 	float totalWeight = total.weight();
 
 	// build the grid
-	const int gridDim = 8;
+	const int gridDim = 3;
 	AABB grid[gridDim][gridDim][gridDim];
 	int countGrid[gridDim][gridDim][gridDim];
 	for (int i = 0; i < gridDim; ++i)
@@ -226,29 +191,11 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 		countGrid[cx][cy][cz] += 1;
 	}
 
-	// debug
-	/*for (int j = 0; j < 8; ++j)
-	{
-		for (int i = 0; i < 8; ++i)
-		{
-			int total = 0;
-			for (int k = 0; k < 8; ++k)
-			{
-				total += countGrid[i][j][k];
-			}
-			printf("%4d,", total);
-		}
-		printf("\n");
-	}
-	printf("\n");*/
-
 	int bestSlice = 0;
 	int bestAxis = 0;
 	double bestScore = DBL_MAX;
 	int bestLeftCount = 0;
 	int bestRightCount = 0;
-
-	/// TODO: make leftHi and rightLo into ivec3's
 
 	for (int axis = 0; axis < 3; ++axis)
 	{
@@ -296,13 +243,10 @@ BVH_node* buildBVHRecurse(BVH_node* nodes, int* workingList, const int numNodes)
 				}
 			}
 
-			//double leftProb = 1 - pow(1 - left.weight() / totalWeight, 4);
-			//double rightProb = 1 - pow(1 - right.weight() / totalWeight, 4);
 			double leftProb = left.weight() / totalWeight;
 			double rightProb = right.weight() / totalWeight;
 			double score = countLeft * leftProb + countRight * rightProb;
-			//double score = countLeft + countRight;
-			//float score = left.weight() + right.weight();
+
 			if (score < bestScore)
 			{
 				bestSlice = slice;

@@ -16,9 +16,30 @@ struct color
 		: color(0, 0, 0)
 	{}
 
+	__host__ __device__ color operator+(const color& a)
+	{
+		return color(r + a.r, g + a.g, b + a.b);
+	}
+	__host__ __device__ color operator-(const color& a)
+	{
+		return color(r - a.r, g - a.g, b - a.b);
+	}
 	__host__ __device__ color operator*(const float& a)
 	{
 		return color(r * a, g * a, b * a);
+	}
+	__host__ __device__ color operator/(const float& a)
+	{
+		return color(r / a, g / a, b / a);
+	}
+	__host__ __device__ color operator/(const int& a)
+	{
+		return color(r / (float)a, g / (float)a, b / (float)a);
+	}
+
+	__host__ __device__ color operator*(const color& a)
+	{
+		return color(r * a.r, g * a.g, b * a.b);
 	}
 };
 

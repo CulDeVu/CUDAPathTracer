@@ -7,11 +7,13 @@
 #include <cuda.h>
 #include <curand.h>
 #include <curand_kernel.h>
+#include <fstream>
 #include <math.h>
 
 #include "modelLoader.h"
 
 #include "BVH.h"
+#include "BVHTest.h"
 #include "camera.h"
 #include "color.h"
 #include "sphere.h"
@@ -22,7 +24,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 10
+#define NUM_SAMPLES 100
 #define NUM_BOUNCES 3
 
 #define MAX_BVH_DEPTH 64
@@ -102,7 +104,7 @@ struct triIntersection
 	int32_t triIndex;
 	float t;
 };
-__device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh)
+__device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh, uint32_t* test)
 {
 	uint32_t stack[MAX_BVH_DEPTH];
 	stack[0] = 0;
@@ -111,6 +113,7 @@ __device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh)
 	int trisID = -1;
 
 	int i = 0;
+	int counter = 0;
 	while (i >= 0)
 	{
 		if (stack[i] & BVH_LEAF_FLAG)
@@ -121,6 +124,8 @@ __device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh)
 				closestT = t;
 				trisID = stack[i] ^ BVH_LEAF_FLAG;
 			}
+			++counter;
+			test[stack[i] ^ BVH_LEAF_FLAG] += 1;
 
 			--i;
 		}
@@ -139,8 +144,10 @@ __device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh)
 			{
 				--i;
 			}
+			++counter;
 		}
 	}
+	//printf("%d\n", counter);
 
 	triIntersection ret;
 	ret.triIndex = trisID;
@@ -148,7 +155,7 @@ __device__ triIntersection trace(ray r, sceneDesc scene, BVH_array bvh)
 	return ret;
 }
 
-__device__ triIntersection trace_shared(ray r, sceneDesc scene, BVH_array bvh)
+__device__ triIntersection trace_shared(ray r, sceneDesc scene, BVH_array bvh, uint32_t* test)
 {
 	uint32_t warpID = MAX_BVH_DEPTH * (threadIdx.x / 32);
 	__shared__ uint32_t stack[MAX_BVH_DEPTH * 16];
@@ -202,7 +209,222 @@ __device__ triIntersection trace_shared(ray r, sceneDesc scene, BVH_array bvh)
 	return ret;
 }
 
-__device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array bvh, curandState* crs)
+__device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bvh, curandState* crs, uint32_t* test)
+{
+	/*color f_s[4];
+	float G[3];
+	color light;
+	float prob[4];*/
+
+	vec3 x[4];
+	int32_t mat[4];
+	vec3 norm[4];
+	float prob[4];
+
+	{
+		float randArea = scene.totalLightArea * nrand(crs);
+			int selectedTri = 0;
+		for (int j = 0; j < scene.numLights; ++j)
+		{
+			vec3 v0 = scene.verts[scene.tris[scene.lights[j]].v0];
+			vec3 v1 = scene.verts[scene.tris[scene.lights[j]].v1];
+			vec3 v2 = scene.verts[scene.tris[scene.lights[j]].v2];
+			vec3 a1 = v1 - v0;
+			vec3 a2 = v2 - v0;
+			float area = length(cross(a1, a2)) / 2;
+			if (randArea < area && randArea > 0)
+				selectedTri = scene.lights[j];
+			randArea -= area;
+		}
+
+		float u = nrand(crs);
+		float v = nrand(crs);
+		vec3 v0 = scene.verts[scene.tris[selectedTri].v0];
+		vec3 v1 = scene.verts[scene.tris[selectedTri].v1];
+		vec3 v2 = scene.verts[scene.tris[selectedTri].v2];
+		vec3 a1 = v1 - v0;
+		vec3 a2 = v2 - v0;
+
+		if (u + v > 1.0)
+		{
+			u += 2 * (0.5 - u);
+			v += 2 * (0.5 - v);
+		}
+
+		vec3 normal = scene.tris[selectedTri].norm;
+		vec3 pos1 = v0 + a1 * u + a2 * v + normal * 0.001f;
+
+		x[0] = pos1;
+		norm[0] = normal;
+		mat[0] = scene.tris[selectedTri].mat;
+		prob[0] = 1 / scene.totalLightArea;
+
+		vec3 oDir = randRay(normal, crs);
+		ray vDir2;
+		vDir2.o = pos1;
+		vDir2.dir = oDir;
+		triIntersection intersect = trace(vDir2, scene, bvh, test);
+
+		int trisID = intersect.triIndex;
+		float closestT = intersect.t;
+
+		closestT -= 0.001;
+		if (closestT > MAX_FLOAT - 1)
+		{
+			trisID = 0;
+			closestT = 0;
+		}
+
+		triangle curTris = scene.tris[trisID];
+		materialDesc curMat = scene.mats[curTris.mat];
+		vec3 normal2 = scene.tris[trisID].norm;
+
+		vec3 iDir2 = vDir2.dir * -1;
+		vec3 pos = vDir2.o + vDir2.dir * closestT;
+
+		/*float cosODir = abs(dot(iDir2, normal2));
+		color newWeight = BRDF(curMat, iDir2, iDir2);
+		weight = mul(weight, newWeight * 2 * 3.14159);
+		connectionPoint = pos;
+		cosX2_o = dot(normal2, oDir);
+
+		/*light = scene.mats[scene.tris[selectedTri].mat].emmision;
+		if (closestT < 0.001)
+			G[0] = 0;
+		else
+			G[0] = abs(dot(normal, oDir) * dot(normal2, oDir)) / closestT;
+		f_s[1] = mul(curMat.albedo, 1 / 3.14159);
+		prob[0] = 1 / scene.totalLightArea;
+		prob[1] = max(0.001f, 1 / (2 * 3.14159) * G[0]);*/
+		float G;
+		if (closestT < 0.001)
+			G = 0;
+		else
+			G = abs(dot(normal2, oDir)) / max(0.001f, closestT * closestT);
+
+		x[1] = pos;
+		norm[1] = normal2;
+		mat[1] = curTris.mat;
+		prob[1] = max(0.001f, 1 / (2 * 3.14159) * G);
+	}
+
+	{
+		triIntersection intersect = trace(vDir, scene, bvh, test);
+		int trisID = intersect.triIndex;
+		float closestT = intersect.t;
+
+		closestT -= 0.001;
+		if (closestT > MAX_FLOAT - 1)
+		{
+			trisID = 0;
+			closestT = 0;
+		}
+
+		triangle curTris = scene.tris[trisID];
+		materialDesc curMat = scene.mats[curTris.mat];
+		vec3 normal = scene.tris[trisID].norm;
+
+		vec3 oDir = vDir.dir * -1;
+		vec3 lDir;
+		vec3 pos = vDir.o + vDir.dir * closestT;
+
+		float cosODir = abs(dot(oDir, normal));
+
+		/*lDir = normalized(connectionPoint - pos);
+		float len = max(0.001, length(connectionPoint - pos));
+		float cosLDir = max(0.0f, dot(lDir, normal));
+
+		/*float invProb = max(0.0f, dot(lDir * -1, vec3(0, -1, 0))) / (len * len);
+		color curWeight = BRDF(curMat, oDir, lDir) * cosLDir * invProb;
+		weight = mul(weight, curWeight);
+		vDir.o = pos;
+		vDir.dir = lDir;
+
+		intersect = trace(vDir, scene, bvh, test);
+		float V = 1;
+		if (abs(intersect.t - len) > 0.01)
+			V = 0;*/
+
+		/*f_s[2] = mul(curMat.albedo, 1 / 3.14159);
+		G[1] = V * abs(dot(normal, lDir) * cosX2_o) / len;
+		G[2] = 1;
+		prob[2] = 1;
+		prob[3] = 1;*/
+
+		x[2] = pos;
+		norm[2] = normal;
+		mat[2] = curTris.mat;
+		prob[2] = 1;
+
+		x[3] = vDir.o;
+	}
+
+	//accum = add(accum, mul(weight, lightMat.emmision));
+	//accum = mul(mul(mul(light, f_s[1]), f_s[2]), G[0] * G[1] * G[2] / (prob[0] * prob[1] * prob[2] * prob[3]));
+	//accum = f_s[2];
+
+	// calc final contribution
+	color accum = color(0, 0, 0);
+	{
+		color weight = color(1, 1, 1);
+
+		color L_e = scene.mats[mat[0]].emmision;
+
+		vec3 seg0_1 = x[1] - x[0];
+		vec3 ray0_1 = normalized(seg0_1);
+		float G0_1 = abs(dot(ray0_1, norm[0]) * dot(ray0_1, norm[1])) / max(0.001f, dot(seg0_1, seg0_1));
+		if (G0_1 != G0_1)
+			G0_1 = 0;
+		color f0_1_2 = mul(scene.mats[mat[1]].albedo, 1 / 3.14159);
+
+		vec3 seg1_2 = x[2] - x[1];
+		float len1_2 = length(x[2] - x[1]);
+		vec3 ray1_2 = normalized(seg1_2);
+		float V1_2 = 1;
+		{
+			ray vDir;
+			vDir.o = x[1];
+			vDir.dir = ray1_2;
+			triIntersection intersect = trace(vDir, scene, bvh, test);
+			if (abs(intersect.t - len1_2) > 0.01)
+				V1_2 = 0;
+		}
+		float G1_2 = V1_2 * abs(max(0.0f, dot(ray1_2, norm[1])) * max(0.0f, dot(ray1_2 * -1, norm[2]))) / max(0.001f, dot(seg1_2, seg1_2));
+		color f1_2_3 = mul(scene.mats[mat[2]].albedo, 1 / 3.14159);
+
+		accum = mul(mul(L_e, f0_1_2), f1_2_3) * G0_1 * G1_2 / max(0.001f, prob[0] * prob[1] * prob[2]);
+
+		// direct lighting
+		vec3 seg0_2 = x[2] - x[0];
+		float len0_2 = length(seg0_2);
+		vec3 ray0_2 = normalized(seg0_2);
+		float V0_2 = 1;
+		{
+			ray vDir;
+			vDir.o = x[0];
+			vDir.dir = ray0_2;
+			triIntersection intersect = trace(vDir, scene, bvh, test);
+			if (abs(intersect.t - len0_2) > 0.01)
+				V0_2 = 0;
+		}
+		float G0_2 = V0_2 * abs(dot(ray0_2, norm[0]) * dot(ray0_2, norm[2])) / max(0.001f, dot(seg0_2, seg0_2));
+		if (G0_2 != G0_2)
+			G0_2 = 0;
+		color f0_2_3 = mul(scene.mats[mat[2]].albedo, 1 / 3.14159);
+
+		accum = add(accum, mul(L_e, f0_2_3) * G0_2 / max(0.001f, prob[0] * prob[2]));
+
+		// directly intersecting light
+		accum = add(accum, scene.mats[mat[2]].emmision);
+
+		if (accum.r != accum.r)
+			accum = color(5, 0, 0);
+	}
+
+	return accum;
+}
+
+__device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array bvh, curandState* crs, uint32_t* test)
 {
 	color accum = color(0, 0, 0);
 	color weight = color(1, 1, 1);
@@ -210,7 +432,7 @@ __device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array b
 	for (int i = 0; i < NUM_BOUNCES; ++i)
 	{
 		// intersection routine
-		triIntersection intersect = trace(vDir, scene, bvh);
+		triIntersection intersect = trace(vDir, scene, bvh, test);
 		int trisID = intersect.triIndex;
 		float closestT = intersect.t;
 
@@ -324,7 +546,7 @@ __global__ void drawPixel(
 	camera* cam,
 	BVH_array bvh,
 	int curSampleNum,
-	curandState* randState)
+	curandState* randState, uint32_t* test)
 {
 	int idx = blockIdx.x*blockDim.x + threadIdx.x;
 	if (idx >= IMAGE_SIZE)
@@ -332,7 +554,7 @@ __global__ void drawPixel(
 
 	ray r = cam->cameraRay(idx, nrand(randState), nrand(randState));
 
-	color result = radianceAlongSingleStep2(r, scene, bvh, &randState[idx]);
+	color result = radianceAlongSingleStep(r, scene, bvh, &randState[idx], test);
 
 	color prevSum = imgBuff[idx];
 	imgBuff[idx] = add(mul(prevSum, (float)(curSampleNum - 1) / curSampleNum), mul(result, 1.0f / curSampleNum));
@@ -360,9 +582,9 @@ int main()
 	printf("\n");
 
 	// load shit
-	loadOBJ("models/sponza_light.obj", vec3(), 1);
-	//loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
-	//loadOBJ("models/teapot.obj", vec3(0, 1, 0), 1);
+	//loadOBJ("models/sponza_light.obj", vec3(), 1);
+	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
+	loadOBJ("models/teapot.obj", vec3(0.35, 0.6, 0.3), 0.75);
 	//loadOBJ("models/dragon_simple.obj", vec3(0.3, 0.6, 0.5), 1);
 	//loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.5);
 	//loadOBJ("models/my_cornell.obj", vec3(), 1);
@@ -373,8 +595,8 @@ int main()
 	//getchar();
 	BVH_array bvh = buildBVH();
 	printf("MAX DEPTH OF TREE: %d\n", bvh.depth);
-	/*getchar();*/
-	/*printf("---\n");
+	/*getchar();*
+/	/*printf("---\n");
 	for (int i = 0; i < bvh.size; ++i)
 	{
 		printf("(%f,%f,%f), (%f,%f,%f), %d,%d\n", bvh.root[i].box.lo.x, bvh.root[i].box.lo.y, bvh.root[i].box.lo.z, 
@@ -392,7 +614,7 @@ int main()
 			printf("\t%d -- %d\n", i, bvh.root[i].left);
 		
 		if (bvh.root[i].right & BVH_LEAF_FLAG)
-			printf("\t%d -- -%zd\n", i, bvh.root[i].right ^ BVH_LEAF_FLAG);
+			printf("\t%d -- -%zd\n", i, bvh.root[i.]newtfl1A1right ^ BVH_LEAF_FLAG);
 		else
 			printf("\t%d -- %d\n", i, bvh.root[i].right);
 	}*/
@@ -464,6 +686,11 @@ int main()
 	bvh_device.depth = bvh.depth;
 	//cudaMemcpyToSymbol(bvhArray, bvh.root, bvh.size * sizeof(BVH_array_node));
 
+	// bvh intersection counter
+	uint32_t* bvhIntersection_device;
+	cudaMalloc((void**)&bvhIntersection_device, bvh.size * sizeof(uint32_t));
+	cudaMemset(bvhIntersection_device, 0, bvh.size * sizeof(uint32_t));
+
 	cudaDeviceSynchronize();
 	checkError();
 
@@ -474,14 +701,14 @@ int main()
 	cudaEventCreate(&stop);
 	cudaEventRecord(start, 0);
 	{
-		int sampleNum = 1;
-		while (sampleNum <= NUM_SAMPLES)
+		int sampleNum = 0;
+		while (sampleNum < NUM_SAMPLES)
 		{
 			auto start = std::chrono::steady_clock::now();
 
-			drawPixel <<< nblocks, nThreads >>>(imgBuffer_device, scene_device, cam_device, bvh_device, sampleNum, randState_device);
+			drawPixel <<< nblocks, nThreads >>>(imgBuffer_device, scene_device, cam_device, bvh_device, sampleNum + 1, randState_device, bvhIntersection_device);
 
-			if ((sampleNum - 1) % 10 == 0)
+			if ((sampleNum + 1) % 10 == 0 && sampleNum)
 				printf("sample %d finished\n", sampleNum);
 			cudaDeviceSynchronize();
 
@@ -498,6 +725,16 @@ int main()
 	cudaEventSynchronize(stop); // shouldnt need this but fuck CUDA
 	printf("exiting render loop!\n\n");
 
+	{
+		uint32_t* a = new uint32_t[bvh.size];
+		cudaMemcpy(a, bvhIntersection_device, bvh.size * sizeof(uint32_t), cudaMemcpyDeviceToHost);
+		cudaDeviceSynchronize();
+		std::ofstream f("out.csv");
+		for (int i = 0; i < bvh.size; ++i)
+			f << a[i] << ",\n";
+		delete[] a;
+	}
+
 	// report time taken
 	float milliseconds = 0;
 	cudaEventElapsedTime(&milliseconds, start, stop);
@@ -507,6 +744,7 @@ int main()
 
 	// build imgBuffer_host
 	cudaMemcpy(imgBuffer_host, imgBuffer_device, IMAGE_SIZE * sizeof(color), cudaMemcpyDeviceToHost);
+	cudaDeviceSynchronize();
 
 	// save the file
 	FILE* fp = fopen("image.ppm", "w");
