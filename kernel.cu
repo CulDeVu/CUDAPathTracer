@@ -24,7 +24,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 10
+#define NUM_SAMPLES 100
 #define NUM_BOUNCES 3
 
 #define MAX_BVH_DEPTH 64
@@ -284,11 +284,7 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 		vec3 iDir2 = vDir2.dir * -1;
 		vec3 pos = vDir2.o + vDir2.dir * closestT;
 
-		float G;
-		if (closestT < 0.001)
-			G = 0;
-		else
-			G = abs(dot(normal2, oDir)) / max(0.001f, closestT * closestT);
+		float G = abs(dot(normal2, oDir)) / max(0.001f, closestT * closestT);
 
 		x[1] = pos;
 		norm[1] = normal2;
@@ -334,11 +330,7 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 
 		vec3 normal = scene.tris[intersect.triIndex].norm;
 
-		float G;
-		if (intersect.t < 0.001)
-			G = 0;
-		else
-			G = abs(dot(normal, vDir.dir) * dot(norm[camInd - 1], vDir.dir)) / max(0.001f, intersect.t * intersect.t);
+		float G = abs(dot(normal, vDir.dir) * dot(norm[camInd - 1], vDir.dir)) / max(0.001f, intersect.t * intersect.t);
 
 		x[camInd - 2] = vDir.o + vDir.dir * intersect.t;
 		norm[camInd - 2] = scene.tris[intersect.triIndex].norm;
@@ -368,27 +360,6 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 				weight = mul(weight, f_s) * G / max(0.001f, prob[k]);
 			}
 
-			// the middle link
-			{
-				vec3 seg = x[j] - x[i];
-				float len = length(seg);
-				vec3 ray = normalized(seg);
-				float G = abs(dot(ray, norm[j]) * dot(ray, norm[i])) / max(0.001f, dot(seg, seg));
-				if (G != G)
-					G = 0;
-				float V = 1;
-				{
-					//ray vDir;
-					vDir.o = x[i];
-					vDir.dir = ray;
-					triIntersection intersect = trace(vDir, scene, bvh, test);
-					if (abs(intersect.t - len) > 0.01)
-						V = 0;
-				}
-				color f_s = scene.mats[mat[j]].albedo / 3.14159f;
-				weight = mul(weight, f_s) * G * V / max(0.001f, prob[j]);
-			}
-
 			for (int k = j + 1; k < PATH_SIZE - 1; ++k)
 			{
 				vec3 seg = x[k] - x[k - 1];
@@ -398,6 +369,31 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 					G = 0;
 				color f_s = scene.mats[mat[k]].albedo / 3.14159f;
 				weight = mul(weight, f_s) * G / max(0.001f, prob[k]);
+			}
+
+			// the middle link
+			{
+				vec3 seg = x[j] - x[i];
+				float len = length(seg);
+				vec3 ray = normalized(seg);
+				float G = abs(dot(ray, norm[j]) * dot(ray, norm[i])) / max(0.001f, dot(seg, seg));
+				if (G != G)
+					G = 0;
+				color f_s = scene.mats[mat[j]].albedo / 3.14159f;
+				weight = mul(weight, f_s) * G / max(0.001f, prob[j]);
+				float m = max(weight.r, max(weight.g, weight.b));
+
+				float V = 0;
+				if (m > 0.01)
+				{
+					//ray vDir;
+					vDir.o = x[i];
+					vDir.dir = ray;
+					triIntersection intersect = trace(vDir, scene, bvh, test);
+					if (abs(intersect.t - len) <= 0.01)
+						V = 1;
+				}
+				weight = weight * V;
 			}
 
 			accum = add(accum, weight);
@@ -632,7 +628,7 @@ int main()
 	// load shit
 	//loadOBJ("models/sponza_light.obj", vec3(), 1);
 	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
-	//loadOBJ("models/teapot.obj", vec3(0.35, 0.6, 0.3), 0.75);
+	loadOBJ("models/teapot.obj", vec3(0.35, 0.6, 0.3), 0.75);
 	//loadOBJ("models/dragon_simple.obj", vec3(0.3, 0.6, 0.5), 1);
 	//loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.5);
 	//loadOBJ("models/my_cornell.obj", vec3(), 1);
