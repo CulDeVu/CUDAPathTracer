@@ -1,3 +1,2 @@
-# TEST README
+# Yet Another CUDA Path Tracer
 
-I have no idea what i'm doing

@@ -24,7 +24,7 @@
 #define IMAGE_HEIGHT 512
 #define IMAGE_SIZE (IMAGE_WIDTH*IMAGE_HEIGHT)
 #define TILE_SIZE (IMAGE_SIZE)
-#define NUM_SAMPLES 100
+#define NUM_SAMPLES 10
 #define NUM_BOUNCES 3
 
 #define MAX_BVH_DEPTH 64
@@ -211,16 +211,17 @@ __device__ triIntersection trace_shared(ray r, sceneDesc scene, BVH_array bvh, u
 
 __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bvh, curandState* crs, uint32_t* test)
 {
-	/*color f_s[4];
-	float G[3];
-	color light;
-	float prob[4];*/
+	const int LIGHT_PATH_SIZE = 2;
+	const int CAMERA_PATH_SIZE = 3;
+	const int PATH_SIZE = LIGHT_PATH_SIZE + CAMERA_PATH_SIZE;
+	const int camInd = PATH_SIZE - 1;
 
-	vec3 x[4];
-	int32_t mat[4];
-	vec3 norm[4];
-	float prob[4];
+	vec3 x[PATH_SIZE];
+	int32_t mat[PATH_SIZE];
+	vec3 norm[PATH_SIZE];
+	float prob[PATH_SIZE];
 
+	// light path
 	{
 		float randArea = scene.totalLightArea * nrand(crs);
 			int selectedTri = 0;
@@ -258,10 +259,11 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 		norm[0] = normal;
 		mat[0] = scene.tris[selectedTri].mat;
 		prob[0] = 1 / scene.totalLightArea;
-
-		vec3 oDir = randRay(normal, crs);
+	}
+	{
+		vec3 oDir = randRay(norm[0], crs);
 		ray vDir2;
-		vDir2.o = pos1;
+		vDir2.o = x[0];
 		vDir2.dir = oDir;
 		triIntersection intersect = trace(vDir2, scene, bvh, test);
 
@@ -282,20 +284,6 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 		vec3 iDir2 = vDir2.dir * -1;
 		vec3 pos = vDir2.o + vDir2.dir * closestT;
 
-		/*float cosODir = abs(dot(iDir2, normal2));
-		color newWeight = BRDF(curMat, iDir2, iDir2);
-		weight = mul(weight, newWeight * 2 * 3.14159);
-		connectionPoint = pos;
-		cosX2_o = dot(normal2, oDir);
-
-		/*light = scene.mats[scene.tris[selectedTri].mat].emmision;
-		if (closestT < 0.001)
-			G[0] = 0;
-		else
-			G[0] = abs(dot(normal, oDir) * dot(normal2, oDir)) / closestT;
-		f_s[1] = mul(curMat.albedo, 1 / 3.14159);
-		prob[0] = 1 / scene.totalLightArea;
-		prob[1] = max(0.001f, 1 / (2 * 3.14159) * G[0]);*/
 		float G;
 		if (closestT < 0.001)
 			G = 0;
@@ -308,6 +296,12 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 		prob[1] = max(0.001f, 1 / (2 * 3.14159) * G);
 	}
 
+	// camera path
+	{
+		x[camInd] = vDir.o;
+		norm[camInd] = vDir.dir;
+		prob[camInd] = 1;
+	}
 	{
 		triIntersection intersect = trace(vDir, scene, bvh, test);
 		int trisID = intersect.triIndex;
@@ -324,47 +318,95 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 		materialDesc curMat = scene.mats[curTris.mat];
 		vec3 normal = scene.tris[trisID].norm;
 
-		vec3 oDir = vDir.dir * -1;
-		vec3 lDir;
 		vec3 pos = vDir.o + vDir.dir * closestT;
 
-		float cosODir = abs(dot(oDir, normal));
+		x[camInd - 1] = pos;
+		norm[camInd - 1] = normal;
+		mat[camInd - 1] = curTris.mat;
+		prob[camInd - 1] = 1;
+	}
+	{
+		ray vDir;
+		vDir.o = x[camInd - 1];
+		vDir.dir = cosineWeightedRay(norm[camInd - 1], crs);
+		triIntersection intersect = trace(vDir, scene, bvh, test);
+		intersect.t -= 0.001;
 
-		/*lDir = normalized(connectionPoint - pos);
-		float len = max(0.001, length(connectionPoint - pos));
-		float cosLDir = max(0.0f, dot(lDir, normal));
+		vec3 normal = scene.tris[intersect.triIndex].norm;
 
-		/*float invProb = max(0.0f, dot(lDir * -1, vec3(0, -1, 0))) / (len * len);
-		color curWeight = BRDF(curMat, oDir, lDir) * cosLDir * invProb;
-		weight = mul(weight, curWeight);
-		vDir.o = pos;
-		vDir.dir = lDir;
+		float G;
+		if (intersect.t < 0.001)
+			G = 0;
+		else
+			G = abs(dot(normal, vDir.dir) * dot(norm[camInd - 1], vDir.dir)) / max(0.001f, intersect.t * intersect.t);
 
-		intersect = trace(vDir, scene, bvh, test);
-		float V = 1;
-		if (abs(intersect.t - len) > 0.01)
-			V = 0;*/
-
-		/*f_s[2] = mul(curMat.albedo, 1 / 3.14159);
-		G[1] = V * abs(dot(normal, lDir) * cosX2_o) / len;
-		G[2] = 1;
-		prob[2] = 1;
-		prob[3] = 1;*/
-
-		x[2] = pos;
-		norm[2] = normal;
-		mat[2] = curTris.mat;
-		prob[2] = 1;
-
-		x[3] = vDir.o;
+		x[camInd - 2] = vDir.o + vDir.dir * intersect.t;
+		norm[camInd - 2] = scene.tris[intersect.triIndex].norm;
+		mat[camInd - 2] = scene.tris[intersect.triIndex].mat;
+		prob[camInd - 2] = max(0.001f, G / 3.14159);
 	}
 
-	//accum = add(accum, mul(weight, lightMat.emmision));
-	//accum = mul(mul(mul(light, f_s[1]), f_s[2]), G[0] * G[1] * G[2] / (prob[0] * prob[1] * prob[2] * prob[3]));
-	//accum = f_s[2];
+	color accum = color(0, 0, 0);
+	color L_e = scene.mats[mat[0]].emmision;
+	for (int i = 0; i < LIGHT_PATH_SIZE; ++i)
+	//int i = LIGHT_PATH_SIZE - 1;
+	{
+		for (int j = LIGHT_PATH_SIZE; j < PATH_SIZE - 1; ++j)
+		//int j = LIGHT_PATH_SIZE;
+		{
+			color weight = L_e / prob[0];
+
+			// light path first
+			for (int k = 1; k <= i; ++k)
+			{
+				vec3 seg = x[k] - x[k - 1];
+				vec3 ray = normalized(seg);
+				float G = abs(dot(ray, norm[k]) * dot(ray, norm[k - 1])) / max(0.001f, dot(seg, seg));
+				if (G != G)
+					G = 0;
+				color f_s = scene.mats[mat[k]].albedo / 3.14159f;
+				weight = mul(weight, f_s) * G / max(0.001f, prob[k]);
+			}
+
+			// the middle link
+			{
+				vec3 seg = x[j] - x[i];
+				float len = length(seg);
+				vec3 ray = normalized(seg);
+				float G = abs(dot(ray, norm[j]) * dot(ray, norm[i])) / max(0.001f, dot(seg, seg));
+				if (G != G)
+					G = 0;
+				float V = 1;
+				{
+					//ray vDir;
+					vDir.o = x[i];
+					vDir.dir = ray;
+					triIntersection intersect = trace(vDir, scene, bvh, test);
+					if (abs(intersect.t - len) > 0.01)
+						V = 0;
+				}
+				color f_s = scene.mats[mat[j]].albedo / 3.14159f;
+				weight = mul(weight, f_s) * G * V / max(0.001f, prob[j]);
+			}
+
+			for (int k = j + 1; k < PATH_SIZE - 1; ++k)
+			{
+				vec3 seg = x[k] - x[k - 1];
+				vec3 ray = normalized(seg);
+				float G = abs(dot(ray, norm[k]) * dot(ray, norm[k - 1])) / max(0.001f, dot(seg, seg));
+				if (G != G)
+					G = 0;
+				color f_s = scene.mats[mat[k]].albedo / 3.14159f;
+				weight = mul(weight, f_s) * G / max(0.001f, prob[k]);
+			}
+
+			accum = add(accum, weight);
+			accum = add(accum, scene.mats[mat[PATH_SIZE - 2]].emmision);
+		}
+	}
 
 	// calc final contribution
-	color accum = color(0, 0, 0);
+	/*color accum = color(0, 0, 0);
 	{
 		color weight = color(1, 1, 1);
 
@@ -391,6 +433,12 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 		}
 		float G1_2 = V1_2 * abs(max(0.0f, dot(ray1_2, norm[1])) * max(0.0f, dot(ray1_2 * -1, norm[2]))) / max(0.001f, dot(seg1_2, seg1_2));
 		color f1_2_3 = mul(scene.mats[mat[2]].albedo, 1 / 3.14159);
+
+		vec3 seg2_3 = x[2] - x[3];
+		vec3 ray2_3 = normalized(seg2_3);
+		float G2_3 = abs(dot(ray2_3, norm[2]) * dot(ray2_3, norm[3])) / max(0.001f, dot(seg2_3, seg2_3));
+		if (G2_3 != G2_3)
+			G2_3 = 0;
 
 		accum = mul(mul(L_e, f0_1_2), f1_2_3) * G0_1 * G1_2 / max(0.001f, prob[0] * prob[1] * prob[2]);
 
@@ -419,7 +467,7 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 
 		if (accum.r != accum.r)
 			accum = color(5, 0, 0);
-	}
+	}*/
 
 	return accum;
 }
@@ -584,7 +632,7 @@ int main()
 	// load shit
 	//loadOBJ("models/sponza_light.obj", vec3(), 1);
 	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);
-	loadOBJ("models/teapot.obj", vec3(0.35, 0.6, 0.3), 0.75);
+	//loadOBJ("models/teapot.obj", vec3(0.35, 0.6, 0.3), 0.75);
 	//loadOBJ("models/dragon_simple.obj", vec3(0.3, 0.6, 0.5), 1);
 	//loadOBJ("models/cube.obj", vec3(0, 0, 0), 0.5);
 	//loadOBJ("models/my_cornell.obj", vec3(), 1);
