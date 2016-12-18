@@ -1,8 +1,10 @@
 models/*
 *.exe
+*.dll
 *.lib
 *.exp
 *.obj
 *.pdb
 
 image - *.ppm
+image.ppm

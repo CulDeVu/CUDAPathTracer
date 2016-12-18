@@ -4,20 +4,24 @@
 
 #include <stdio.h>
 #include <chrono>
+#include <fstream>
+#include <math.h>
+#include <windows.h>
+
 #include <cuda.h>
 #include <curand.h>
 #include <curand_kernel.h>
-#include <fstream>
-#include <math.h>
+#include <nvml.h>
 
 #include "modelLoader.h"
 
 #include "BVH.h"
-#include "BVHTest.h"
 #include "camera.h"
 #include "color.h"
 #include "sphere.h"
 #include "vec3.h"
+
+#include "SIUnits.h"
 
 // global constants
 #define IMAGE_WIDTH 512
@@ -219,7 +223,7 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 	vec3 x[PATH_SIZE];
 	int32_t mat[PATH_SIZE];
 	vec3 norm[PATH_SIZE];
-	float prob[PATH_SIZE];
+	float invProb[PATH_SIZE];
 
 	// light path
 	{
@@ -258,7 +262,7 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 		x[0] = pos1;
 		norm[0] = normal;
 		mat[0] = scene.tris[selectedTri].mat;
-		prob[0] = 1 / scene.totalLightArea;
+		invProb[0] = scene.totalLightArea;
 	}
 	{
 		vec3 oDir = randRay(norm[0], crs);
@@ -289,14 +293,14 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 		x[1] = pos;
 		norm[1] = normal2;
 		mat[1] = curTris.mat;
-		prob[1] = max(0.001f, 1 / (2 * 3.14159) * G);
+		invProb[1] = 2 * 3.14159 / G;
 	}
 
 	// camera path
 	{
 		x[camInd] = vDir.o;
 		norm[camInd] = vDir.dir;
-		prob[camInd] = 1;
+		invProb[camInd] = 1;
 	}
 	{
 		triIntersection intersect = trace(vDir, scene, bvh, test);
@@ -319,7 +323,7 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 		x[camInd - 1] = pos;
 		norm[camInd - 1] = normal;
 		mat[camInd - 1] = curTris.mat;
-		prob[camInd - 1] = 1;
+		invProb[camInd - 1] = 1;
 	}
 	{
 		ray vDir;
@@ -330,12 +334,16 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 
 		vec3 normal = scene.tris[intersect.triIndex].norm;
 
-		float G = abs(dot(normal, vDir.dir) * dot(norm[camInd - 1], vDir.dir)) / max(0.001f, intersect.t * intersect.t);
+		float G = abs(dot(norm[camInd - 1], vDir.dir) * dot(normal, vDir.dir)) / (intersect.t * intersect.t);
+		if (G == 0)
+			G = 1;
+		if (G != G)
+			G = 1;
 
 		x[camInd - 2] = vDir.o + vDir.dir * intersect.t;
 		norm[camInd - 2] = scene.tris[intersect.triIndex].norm;
 		mat[camInd - 2] = scene.tris[intersect.triIndex].mat;
-		prob[camInd - 2] = max(0.001f, G / 3.14159);
+		invProb[camInd - 2] = 3.14159 / G;
 	}
 
 	color accum = color(0, 0, 0);
@@ -346,29 +354,29 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 		for (int j = LIGHT_PATH_SIZE; j < PATH_SIZE - 1; ++j)
 		//int j = LIGHT_PATH_SIZE;
 		{
-			color weight = L_e / prob[0];
+			color weight = L_e * invProb[0];
 
 			// light path first
 			for (int k = 1; k <= i; ++k)
 			{
 				vec3 seg = x[k] - x[k - 1];
 				vec3 ray = normalized(seg);
-				float G = abs(dot(ray, norm[k]) * dot(ray, norm[k - 1])) / max(0.001f, dot(seg, seg));
+				float G = abs(dot(ray, norm[k]) * dot(ray, norm[k - 1])) / dot(seg, seg);
 				if (G != G)
 					G = 0;
 				color f_s = scene.mats[mat[k]].albedo / 3.14159f;
-				weight = mul(weight, f_s) * G / max(0.001f, prob[k]);
+				weight = mul(weight, f_s) * G * invProb[k];
 			}
 
 			for (int k = j + 1; k < PATH_SIZE - 1; ++k)
 			{
 				vec3 seg = x[k] - x[k - 1];
 				vec3 ray = normalized(seg);
-				float G = abs(dot(ray, norm[k]) * dot(ray, norm[k - 1])) / max(0.001f, dot(seg, seg));
+				float G = abs(dot(ray, norm[k]) * dot(ray, norm[k - 1])) / dot(seg, seg);
 				if (G != G)
 					G = 0;
 				color f_s = scene.mats[mat[k]].albedo / 3.14159f;
-				weight = mul(weight, f_s) * G / max(0.001f, prob[k]);
+				weight = mul(weight, f_s) * G * invProb[k];
 			}
 
 			// the middle link
@@ -376,11 +384,11 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 				vec3 seg = x[j] - x[i];
 				float len = length(seg);
 				vec3 ray = normalized(seg);
-				float G = abs(dot(ray, norm[j]) * dot(ray, norm[i])) / max(0.001f, dot(seg, seg));
+				float G = max(0.0f, dot(ray, norm[j]) * dot(ray * -1, norm[i])) / dot(seg, seg);
 				if (G != G)
 					G = 0;
 				color f_s = scene.mats[mat[j]].albedo / 3.14159f;
-				weight = mul(weight, f_s) * G / max(0.001f, prob[j]);
+				weight = mul(weight, f_s) * G * invProb[j];
 				float m = max(weight.r, max(weight.g, weight.b));
 
 				float V = 0;
@@ -400,70 +408,6 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 			accum = add(accum, scene.mats[mat[PATH_SIZE - 2]].emmision);
 		}
 	}
-
-	// calc final contribution
-	/*color accum = color(0, 0, 0);
-	{
-		color weight = color(1, 1, 1);
-
-		color L_e = scene.mats[mat[0]].emmision;
-
-		vec3 seg0_1 = x[1] - x[0];
-		vec3 ray0_1 = normalized(seg0_1);
-		float G0_1 = abs(dot(ray0_1, norm[0]) * dot(ray0_1, norm[1])) / max(0.001f, dot(seg0_1, seg0_1));
-		if (G0_1 != G0_1)
-			G0_1 = 0;
-		color f0_1_2 = mul(scene.mats[mat[1]].albedo, 1 / 3.14159);
-
-		vec3 seg1_2 = x[2] - x[1];
-		float len1_2 = length(x[2] - x[1]);
-		vec3 ray1_2 = normalized(seg1_2);
-		float V1_2 = 1;
-		{
-			ray vDir;
-			vDir.o = x[1];
-			vDir.dir = ray1_2;
-			triIntersection intersect = trace(vDir, scene, bvh, test);
-			if (abs(intersect.t - len1_2) > 0.01)
-				V1_2 = 0;
-		}
-		float G1_2 = V1_2 * abs(max(0.0f, dot(ray1_2, norm[1])) * max(0.0f, dot(ray1_2 * -1, norm[2]))) / max(0.001f, dot(seg1_2, seg1_2));
-		color f1_2_3 = mul(scene.mats[mat[2]].albedo, 1 / 3.14159);
-
-		vec3 seg2_3 = x[2] - x[3];
-		vec3 ray2_3 = normalized(seg2_3);
-		float G2_3 = abs(dot(ray2_3, norm[2]) * dot(ray2_3, norm[3])) / max(0.001f, dot(seg2_3, seg2_3));
-		if (G2_3 != G2_3)
-			G2_3 = 0;
-
-		accum = mul(mul(L_e, f0_1_2), f1_2_3) * G0_1 * G1_2 / max(0.001f, prob[0] * prob[1] * prob[2]);
-
-		// direct lighting
-		vec3 seg0_2 = x[2] - x[0];
-		float len0_2 = length(seg0_2);
-		vec3 ray0_2 = normalized(seg0_2);
-		float V0_2 = 1;
-		{
-			ray vDir;
-			vDir.o = x[0];
-			vDir.dir = ray0_2;
-			triIntersection intersect = trace(vDir, scene, bvh, test);
-			if (abs(intersect.t - len0_2) > 0.01)
-				V0_2 = 0;
-		}
-		float G0_2 = V0_2 * abs(dot(ray0_2, norm[0]) * dot(ray0_2, norm[2])) / max(0.001f, dot(seg0_2, seg0_2));
-		if (G0_2 != G0_2)
-			G0_2 = 0;
-		color f0_2_3 = mul(scene.mats[mat[2]].albedo, 1 / 3.14159);
-
-		accum = add(accum, mul(L_e, f0_2_3) * G0_2 / max(0.001f, prob[0] * prob[2]));
-
-		// directly intersecting light
-		accum = add(accum, scene.mats[mat[2]].emmision);
-
-		if (accum.r != accum.r)
-			accum = color(5, 0, 0);
-	}*/
 
 	return accum;
 }
@@ -604,6 +548,16 @@ __global__ void drawPixel(
 	imgBuff[idx] = add(mul(prevSum, (float)(curSampleNum - 1) / curSampleNum), mul(result, 1.0f / curSampleNum));
 }
 
+unsigned int getGPUTemp()
+{
+	nvmlDevice_t device;
+	nvmlTemperatureSensors_t sensor = NVML_TEMPERATURE_GPU;
+	unsigned int temp;
+	nvmlDeviceGetHandleByIndex(0, &device);
+	nvmlDeviceGetTemperature(device, sensor, &temp);
+	return temp;
+}
+
 int main()
 {
 	// print out CUDA properties
@@ -624,6 +578,14 @@ int main()
 		printf("  Blocks: %d, %d, %d\n", p.maxGridSize[0], p.maxGridSize[1], p.maxGridSize[2]);
 	}
 	printf("\n");
+
+	nvmlReturn_t result = nvmlInit();
+	printf("Error: %s\n", nvmlErrorString(result));
+
+	siLength a(5);
+	siLength b(10);
+	siArea c = a * b;
+	siLength d = a + b;
 
 	// load shit
 	//loadOBJ("models/sponza_light.obj", vec3(), 1);
@@ -745,21 +707,30 @@ int main()
 	cudaEventCreate(&stop);
 	cudaEventRecord(start, 0);
 	{
-		int sampleNum = 0;
+		int sampleNum = 1;
 		while (sampleNum < NUM_SAMPLES)
 		{
 			auto start = std::chrono::steady_clock::now();
 
-			drawPixel <<< nblocks, nThreads >>>(imgBuffer_device, scene_device, cam_device, bvh_device, sampleNum + 1, randState_device, bvhIntersection_device);
-
-			if ((sampleNum + 1) % 10 == 0 && sampleNum)
-				printf("sample %d finished\n", sampleNum);
+			if (sampleNum % 10 == 0)
+				printf("sample %d\n", sampleNum);
 			cudaDeviceSynchronize();
+
+			drawPixel <<< nblocks, nThreads >>>(imgBuffer_device, scene_device, cam_device, bvh_device, sampleNum, randState_device, bvhIntersection_device);
 
 			auto end = std::chrono::steady_clock::now();
 			double diff = std::chrono::duration<double>(end - start).count();
 			if (diff > 0.5)
 				printf("-----Possible too long execution of %f seconds-----\n", diff);
+
+			/*int temp = getGPUTemp();
+			printf("temp: %d\n", temp);
+			if (temp > 60)
+			{
+				printf("stalling for GPU cooldown\n");
+				while (getGPUTemp() > 55)
+					Sleep(0);
+			}*/
 
 			checkError();
 			++sampleNum;
@@ -811,6 +782,8 @@ int main()
 
 	cudaFree(randState_device);
 	cudaFree(cam_device);
+
+	nvmlShutdown();
 
 	getchar();
 
