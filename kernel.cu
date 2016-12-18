@@ -582,11 +582,6 @@ int main()
 	nvmlReturn_t result = nvmlInit();
 	printf("Error: %s\n", nvmlErrorString(result));
 
-	siLength a(5);
-	siLength b(10);
-	siArea c = a * b;
-	siLength d = a + b;
-
 	// load shit
 	//loadOBJ("models/sponza_light.obj", vec3(), 1);
 	loadOBJ("models/CornellBox-Original.obj", vec3(), 1);

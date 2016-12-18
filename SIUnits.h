@@ -39,6 +39,14 @@ public:
 		return ret;
 	}
 
+	template<int l, int m, int t, int s> 
+	siUnits<len - l, mass - m, time - t, sr - s>
+	operator/(siUnits<l, m, t, s> other)
+	{
+		siUnits<len - l, mass - m, time - t, sr - s> ret(num / other.num);
+		return ret;
+	}
+
 	siUnits<len, mass, time, sr>
 	operator*(float a)
 	{
