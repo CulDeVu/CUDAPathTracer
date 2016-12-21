@@ -1,33 +1,44 @@
 #pragma once
 
+#define _global __host__ __device__
+
+struct allUnits
+{
+	int len;
+	int mass;
+	int time;
+	int sr;
+
+	allUnits(int a, int b, int c, int d)
+		: len(a), mass(b), time(c), sr(d)
+	{}
+
+	allUnits operator+(allUnits a)
+	{
+		return allUnits(len + a.len, mass + a.mass, time + a.time, sr + a.sr);
+	}
+
+	allUnits operator*(allUnits a)
+	{
+		return allUnits(len * a.len, mass * a.mass, time * a.time, sr * a.sr);
+	}
+};
+
 template<int len, int mass, int time, int sr>
 class siUnits
 {
 public:
-	float num;
+	float raw;
 
-	siUnits(float n)
+	_global siUnits(float n)
 	{
-		num = n;
-	}
-
-	static int getLenUnits()
-	{
-		return len;
-	}
-	static int getMassUnits()
-	{
-		return mass;
-	}
-	static int getTimeUnits()
-	{
-		return time;
+		raw = n;
 	}
 
 	siUnits<len, mass, time, sr>
 	operator+(siUnits<len, mass, time, sr> other)
 	{
-		siUnits<len, mass, time, sr> ret(num + other.num);
+		siUnits<len, mass, time, sr> ret(raw + other.raw);
 		return ret;
 	}
 
@@ -35,7 +46,7 @@ public:
 	siUnits<len + l, mass + m, time + t, sr + s>
 	operator*(siUnits<l, m, t, s> other)
 	{
-		siUnits<len + l, mass + m, time + t, sr + s> ret(num * other.num);
+		siUnits<len + l, mass + m, time + t, sr + s> ret(raw * other.raw);
 		return ret;
 	}
 
@@ -43,17 +54,19 @@ public:
 	siUnits<len - l, mass - m, time - t, sr - s>
 	operator/(siUnits<l, m, t, s> other)
 	{
-		siUnits<len - l, mass - m, time - t, sr - s> ret(num / other.num);
+		siUnits<len - l, mass - m, time - t, sr - s> ret(raw / other.raw);
 		return ret;
 	}
 
 	siUnits<len, mass, time, sr>
 	operator*(float a)
 	{
-		siUnits<len, mass, time, sr> ret(num * a);
+		siUnits<len, mass, time, sr> ret(raw * a);
 		return ret;
 	}
 };
+
+#define siScalar siUnits<0,0,0,0>
 
 #define siLength   siUnits<1,0,0,0>
 #define siArea     siUnits<2,0,0,0>
@@ -73,3 +86,5 @@ public:
 
 #define siIrradiance siUnits<0,1,-3,0>
 #define siRadiance siUnits<0,1,-3,-1>
+
+#define siSrInv siUnits<0,0,0,-1>

@@ -18,8 +18,9 @@
 #include "BVH.h"
 #include "camera.h"
 #include "color.h"
-#include "sphere.h"
-#include "vec3.h"
+//#include "sphere.h"
+//#include "vec3.h"
+#include "triple.h"
 
 #include "SIUnits.h"
 
@@ -347,6 +348,7 @@ __device__ color radianceAlongSingleStep(ray vDir, sceneDesc scene, BVH_array bv
 	}
 
 	color accum = color(0, 0, 0);
+	//triple<siRadiance> accum = triple<siRadiance>(0, 0, 0);
 	color L_e = scene.mats[mat[0]].emmision;
 	for (int i = 0; i < LIGHT_PATH_SIZE; ++i)
 	//int i = LIGHT_PATH_SIZE - 1;
@@ -417,6 +419,8 @@ __device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array b
 	color accum = color(0, 0, 0);
 	color weight = color(1, 1, 1);
 
+	siArea totalLightArea = scene.totalLightArea;
+
 	for (int i = 0; i < NUM_BOUNCES; ++i)
 	{
 		// intersection routine
@@ -461,7 +465,7 @@ __device__ color radianceAlongSingleStep2(ray vDir, sceneDesc scene, BVH_array b
 		}
 		else
 		{
-			float randArea = scene.totalLightArea * nrand(crs);
+			float randArea = totalLightArea.raw * nrand(crs);
 			int selectedTri = 0;
 			for (int j = 0; j < scene.numLights; ++j)
 			{
@@ -545,7 +549,7 @@ __global__ void drawPixel(
 	color result = radianceAlongSingleStep(r, scene, bvh, &randState[idx], test);
 
 	color prevSum = imgBuff[idx];
-	imgBuff[idx] = add(mul(prevSum, (float)(curSampleNum - 1) / curSampleNum), mul(result, 1.0f / curSampleNum));
+	imgBuff[idx] = prevSum * (float)(curSampleNum - 1) / curSampleNum + result / curSampleNum;
 }
 
 unsigned int getGPUTemp()
